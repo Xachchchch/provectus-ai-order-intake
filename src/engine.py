@@ -11,6 +11,7 @@ from src.storage import (
     apply_manual_correction,
     get_clarification_draft,
     get_order,
+    get_order_by_request_id,
     list_orders,
     save_clarification_draft,
     save_order,
@@ -22,9 +23,7 @@ def generate_clarification_email(
     order_ref: str,
     issues: List[Dict[str, Any]],
 ) -> Dict[str, str]:
-    """
-    Generate an automated, customer-friendly inquiry email draft for flagged orders.
-    """
+    """Generate an automated customer inquiry email draft for flagged orders."""
     subject = f"Action Required: Clarification needed for Order Ref #{order_ref}"
 
     bullet_points = []
@@ -86,21 +85,25 @@ def process_request(
     force_replay: bool = True,
     db_path: str = DEFAULT_DB_PATH,
 ) -> Dict[str, Any]:
-    """
-    Process a single order request through the end-to-end pipeline:
-    1. Duplicate Detection: Same order_ref describes the same order.
-       Reprocessing an identical request is recorded as a duplicate and DOES NOT create a new draft.
-    2. Information Extraction (LLM with offline replay cache & Pydantic validation).
-    3. Deterministic Validation against catalog & domain rules.
-    4. Deterministic Pricing calculation or Clarification Drafting.
-    5. Persistence to SQLite database with status and cache metadata.
-    """
+    """Process a single order request through the end-to-end pipeline."""
     request_id = request["id"]
     order_ref = request["order_ref"]
     text = request["text"]
 
-    # 1. Duplicate check: Same order_ref describes the same order.
-    # Reprocessing an identical request must not create a second draft.
+    # 0. Idempotency Check: If this request_id was already processed, preserve its state
+    existing_by_req_id = get_order_by_request_id(request_id, db_path=db_path)
+    if existing_by_req_id:
+        return {
+            "id": request_id,
+            "order_ref": order_ref,
+            "outcome": existing_by_req_id["status"],
+            "current_status": existing_by_req_id["status"],
+            "total_cents": existing_by_req_id["total_cents"],
+            "new_drafts": 0,
+            "message": f"Request {request_id} already processed with status '{existing_by_req_id['status']}'.",
+        }
+
+    # 1. Duplicate check: Reprocessing identical request must NOT create a new draft
     existing_order = get_order(order_ref, db_path=db_path)
     if existing_order and existing_order["request_id"] != request_id:
         duplicate_data = {
@@ -112,12 +115,11 @@ def process_request(
             "gross_cents": 0,
             "discount_cents": 0,
             "total_cents": 0,
-            "notes": f"Duplicate request of {existing_order['request_id']} (order_ref '{order_ref}'). Blocked from creating new draft.",
+            "notes": f"Duplicate request for order_ref '{order_ref}'; original order is '{existing_order['request_id']}'.",
             "is_cached": True,
             "model": "rule_based_dedup",
         }
         save_order(duplicate_data, db_path=db_path)
-
         return {
             "id": request_id,
             "order_ref": order_ref,
@@ -127,7 +129,7 @@ def process_request(
             "message": f"Duplicate request for order_ref '{order_ref}'; already processed as '{existing_order['request_id']}'.",
         }
 
-    # 2. Extract structured fields using LLM or offline replay cache
+    # 2. Information Extraction
     extracted = extract_order_information(
         request_id=request_id,
         order_ref=order_ref,
@@ -138,7 +140,6 @@ def process_request(
     is_cached = extracted.get("is_cached", True)
     model_name = extracted.get("model", "llama-3.3-70b-versatile")
 
-    # Check for extraction failure (unparseable or model error)
     if extracted.get("status") == "failed":
         err_msg = extracted.get("error_message", "Unknown extraction failure")
         order_data = {
@@ -165,12 +166,7 @@ def process_request(
 
     items = extracted.get("items", [])
     if not items:
-        # No items detected
-        issue = {
-            "reason": "no items extracted from request text",
-            "product": "unspecified",
-            "quantity": None,
-        }
+        issue = {"reason": "no items extracted from request text", "product": "unspecified", "quantity": None}
         draft_info = generate_clarification_email(request_id, order_ref, [issue])
         save_clarification_draft(draft_info, db_path=db_path)
         order_data = {
@@ -200,6 +196,7 @@ def process_request(
     # 3. Deterministic Catalog Matching & Quantity Validation
     issues = []
     valid_line_items = []
+    catalog_evidence = []
 
     for item in items:
         raw_product = item.get("raw_product_text", "")
@@ -210,7 +207,6 @@ def process_request(
 
         item_has_issue = False
 
-        # Quantity ambiguity check
         if is_qty_ambiguous:
             issues.append(
                 {
@@ -230,7 +226,6 @@ def process_request(
             )
             item_has_issue = True
 
-        # Product matching check
         catalog_item = None
         if extracted_sku:
             catalog_item = get_catalog_item(extracted_sku)
@@ -239,24 +234,15 @@ def process_request(
             matched_item, status, msg = match_catalog_item(raw_product)
             if status in (MatchStatus.EXACT_SKU, MatchStatus.EXACT_DESCRIPTION):
                 catalog_item = matched_item
+                catalog_evidence.append(f"Catalog match: '{raw_product}' -> SKU {matched_item.sku}")
             elif status == MatchStatus.AMBIGUOUS:
-                issues.append(
-                    {
-                        "reason": msg,
-                        "product": raw_product,
-                        "quantity": qty,
-                    }
-                )
+                issues.append({"reason": msg, "product": raw_product, "quantity": qty})
                 item_has_issue = True
             else:
-                issues.append(
-                    {
-                        "reason": "unknown product",
-                        "product": raw_product,
-                        "quantity": qty,
-                    }
-                )
+                issues.append({"reason": "unknown product", "product": raw_product, "quantity": qty})
                 item_has_issue = True
+        else:
+            catalog_evidence.append(f"Direct SKU match: {extracted_sku}")
 
         if not item_has_issue and catalog_item and qty and qty > 0:
             valid_line_items.append(
@@ -268,7 +254,7 @@ def process_request(
                 }
             )
 
-    # 4. Status decision: If ANY issue exists -> needs-clarification
+    # 4. Status decision: Needs clarification vs Clean draft
     if issues:
         draft_info = generate_clarification_email(request_id, order_ref, issues)
         save_clarification_draft(draft_info, db_path=db_path)

@@ -285,61 +285,62 @@ with tab_queue:
 
 with tab_analytics:
     st.header("📊 Intake Analytics & Operational Insights")
-    st.write("Quantitative analysis of order intake health, exception distribution, and actionable operational improvements.")
+    st.caption("All metrics below are computed dynamically from the live database records.")
 
-    total_reqs = len(all_orders) if all_orders else 10
-    auto_drafts = sum(1 for o in all_orders if o["status"] == "draft") if all_orders else 3
-    reviewed = sum(1 for o in all_orders if o["status"] == "reviewed") if all_orders else 0
-    clarifications = sum(1 for o in all_orders if o["status"] == "needs-clarification") if all_orders else 5
-    duplicates = sum(1 for o in all_orders if o["status"] == "duplicate") if all_orders else 1
+    total_reqs = len(all_orders)
 
-    # Key KPI cards
-    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-    exception_rate = ((clarifications + reviewed) / total_reqs) * 100 if total_reqs > 0 else 50.0
-    zero_touch_rate = (auto_drafts / total_reqs) * 100 if total_reqs > 0 else 30.0
+    if total_reqs == 0:
+        st.info("The database is currently empty. Ingest requests from the sidebar to view analytics.")
+    else:
+        auto_drafts = sum(1 for o in all_orders if o["status"] == "draft")
+        reviewed = sum(1 for o in all_orders if o["status"] == "reviewed")
+        clarifications = sum(1 for o in all_orders if o["status"] == "needs-clarification")
+        duplicates = sum(1 for o in all_orders if o["status"] == "duplicate")
+        failed = sum(1 for o in all_orders if o["status"] == "failed")
 
-    kpi1.metric("Zero-Touch Automation", f"{zero_touch_rate:.1f}%", help="Orders ingested directly to draft without manual intervention")
-    kpi2.metric("Exception Rate", f"{exception_rate:.1f}%", help="Orders flagged for clarification or requiring review")
-    kpi3.metric("Duplicate Block Rate", f"{(duplicates/total_reqs)*100:.1f}%", help="Duplicate submissions safely blocked without inflating drafts")
-    kpi4.metric("Catalog Compliance", "100%", help="Deterministic verification against catalog and discount rules")
+        kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
+        kpi1.metric("Zero-Touch Drafts", f"{auto_drafts} ({auto_drafts/total_reqs*100:.0f}%)")
+        kpi2.metric("Human Reviewed", f"{reviewed} ({reviewed/total_reqs*100:.0f}%)")
+        kpi3.metric("Clarifications", f"{clarifications} ({clarifications/total_reqs*100:.0f}%)")
+        kpi4.metric("Duplicates Blocked", f"{duplicates} ({duplicates/total_reqs*100:.0f}%)")
+        kpi5.metric("Processing Failures", f"{failed}")
 
-    st.markdown("---")
+        st.markdown("---")
 
-    col_chart, col_recommendation = st.columns([1, 1])
+        col_chart, col_recommendation = st.columns([1, 1])
 
-    with col_chart:
-        st.subheader("🔍 Breakdown of Exception Causes")
-        
-        # Breakdown statistics from data
-        causes = {
-            "Ambiguous Quantity ('box'/'pack')": 3,
-            "Unknown Product (not in catalog)": 2,
-            "Ambiguous Description (missing length)": 1,
-            "Duplicate Submission": 1,
-        }
+        with col_chart:
+            st.subheader("🔍 Dynamic Exception Breakdown")
+            
+            # Dynamically categorize exceptions based on notes in database
+            box_pack = sum(1 for o in all_orders if any(w in o.get("notes", "").lower() for w in ["box", "pack", "crate", "ambiguous quantity"]))
+            unknown_prod = sum(1 for o in all_orders if "unknown product" in o.get("notes", "").lower())
+            ambiguous_prod = sum(1 for o in all_orders if "ambiguous product" in o.get("notes", "").lower())
+            
+            cause_counts = {
+                "Container Ambiguity ('box'/'pack')": box_pack,
+                "Unknown Catalog Product": unknown_prod,
+                "Ambiguous Description (multiple SKUs)": ambiguous_prod,
+                "Duplicate Submission": duplicates,
+            }
 
-        for cause, count in causes.items():
-            pct = (count / total_reqs) * 100
-            st.write(f"**{cause}**: {count} orders ({pct:.0f}%)")
-            st.progress(pct / 100)
+            for cause, count in cause_counts.items():
+                if count > 0:
+                    pct = (count / total_reqs) * 100
+                    st.write(f"**{cause}**: {count} orders ({pct:.0f}%)")
+                    st.progress(pct / 100)
 
-    with col_recommendation:
-        st.subheader("💡 Actionable Business Process Improvement")
-        st.info(
-            """
-            **Root Cause Analysis**:
-            Over **60% of all exceptions** (4 out of 6 flagged cases) stem from free-text ambiguity at submission:
-            1. Customers ordering in informal containers (*"two boxes"*, *"a pack"*) rather than exact units.
-            2. Customers requesting generic names (*"USB-C cables"*) without specifying required length (1 m vs 2 m).
+        with col_recommendation:
+            st.subheader("💡 Actionable Business Process Improvement")
+            st.info(
+                f"""
+                **Evidence from Current Ingestion Data:**
+                - Out of **{clarifications} clarification exceptions**, **{box_pack} are caused by container terminology** 
+                  (*"boxes"*, *"packs"*, *"crates"*) where unit counts were omitted (e.g., R3, R7, R9).
+                - **{unknown_prod} exceptions** are caused by unlisted products (R2, R10), and **{ambiguous_prod}** by missing length specifications (R8).
 
-            **Recommended Process Improvement**:
-            - **Implement a Guided Order Intake Portal**: Replace free-text email intake with a lightweight structured form or web widget with catalog autocomplete.
-            - **Forced Disambiguation at Point-of-Entry**:
-              * When selecting "USB-C Cable", require selecting the length variant (CAB-1 1m vs CAB-2 2m).
-              * Enforce integer unit counts and explicitly disallow container terms ("box", "pack") before submission.
-            - **Expected Business Impact**:
-              * Eliminates **83% of clarification exceptions**.
-              * Increases **Zero-Touch Automation rate from 30% to over 85%**.
-              * Reduces average order fulfillment lead time from **24–48 hours to under 5 minutes**.
-            """
-        )
+                **Supported Operational Improvement:**
+                1. **Mandatory Piece-Count Field:** By replacing open-ended text with a numeric *'Piece count'* field on incoming portals, all **{box_pack} packaging exceptions ({box_pack/total_reqs*100:.0f}% of total volume)** would be resolved before hitting the operations queue.
+                2. **Catalog Dropdown at Intake:** Restricting product entry to catalog SKUs or forcing length selection for cables would convert the remaining exceptions directly into automated drafts.
+                """
+            )

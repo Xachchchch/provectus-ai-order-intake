@@ -12,8 +12,8 @@
       "ambiguity_reason": null
     }
   ],
-  "confidence": 0.94,
+  "confidence": 0.95,
   "is_cached": true,
   "model": "llama-3.3-70b-versatile",
-  "cached_at": "2026-10-05T20:00:00Z"
+  "cached_at": "2026-10-05T21:12:18.107532+00:00"
 }

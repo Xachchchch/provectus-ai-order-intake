@@ -4,16 +4,16 @@
   "raw_text": "Send two boxes of the usual cable.",
   "items": [
     {
-      "raw_product_text": "the usual cable",
+      "raw_product_text": "usual cable",
       "raw_quantity_text": "two boxes",
       "extracted_sku": null,
       "extracted_quantity": null,
       "is_quantity_ambiguous": true,
-      "ambiguity_reason": "ambiguous quantity: box"
+      "ambiguity_reason": "Quantity expressed in container term 'boxes' which is ambiguous without known units per box."
     }
   ],
-  "confidence": 0.9,
+  "confidence": 0.95,
   "is_cached": true,
   "model": "llama-3.3-70b-versatile",
-  "cached_at": "2026-10-05T20:00:00Z"
+  "cached_at": "2026-10-05T21:12:09.129859+00:00"
 }

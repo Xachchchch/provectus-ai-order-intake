@@ -364,3 +364,56 @@ def test_all_10_requests_end_to_end(test_db, requests_data, expected_results_dat
 
         elif exp["outcome"] == "needs-clarification":
             assert "draft_email" in res
+
+
+# =========================================================================
+# ADDITIONAL VERIFICATIONS: Idempotency & Explicit Failure
+# =========================================================================
+
+def test_reprocessing_idempotency_does_not_overwrite_reviewed(test_db):
+    """Verifies that re-ingesting requests does not overwrite a human reviewer's work."""
+    # Step 1: Ingest R10 (initially needs clarification)
+    r10 = {"id": "R10", "order_ref": "O10", "text": "Please send 15 Solar connectors."}
+    process_request(r10, force_replay=True, db_path=test_db)
+
+    # Step 2: Reviewer resolves it to HUB-1
+    apply_reviewer_correction("O10", [{"sku": "HUB-1", "quantity": 15}], reviewer="ops_lead", db_path=test_db)
+    order_before = get_order("O10", db_path=test_db)
+    assert order_before["status"] == "reviewed"
+
+    # Step 3: Re-ingest R10
+    reingest_res = process_request(r10, force_replay=True, db_path=test_db)
+    assert reingest_res["outcome"] == "reviewed"
+    assert reingest_res["new_drafts"] == 0
+
+    # Verify status is STILL 'reviewed' and total_cents remained 67500
+    order_after = get_order("O10", db_path=test_db)
+    assert order_after["status"] == "reviewed"
+    assert order_after["total_cents"] == 67500
+
+
+def test_failed_extraction_path_emits_failed_status(test_db, monkeypatch):
+    """Verifies that an unhandled LLM failure creates an explicit 'failed' status, not silent fallback."""
+    from src import engine
+
+    def mock_broken_extractor(*args, **kwargs):
+        return {
+            "request_id": "ERR_1",
+            "order_ref": "O_ERR",
+            "raw_text": "broken",
+            "status": "failed",
+            "error_message": "Simulated upstream 500 API Gateway Timeout",
+            "is_cached": False,
+            "model": "simulated_error",
+        }
+
+    monkeypatch.setattr(engine, "extract_order_information", mock_broken_extractor)
+
+    bad_req = {"id": "ERR_1", "order_ref": "O_ERR", "text": "broken text"}
+    result = engine.process_request(bad_req, force_replay=True, db_path=test_db)
+
+    assert result["outcome"] == "failed"
+    stored = get_order("O_ERR", db_path=test_db)
+    assert stored["status"] == "failed"
+    assert "Simulated upstream 500" in stored["notes"]
+
