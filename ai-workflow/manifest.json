@@ -20,11 +20,9 @@
       "notes": "llama-3.3-70b-versatile via Groq and gpt-4o-mini via OpenAI with temperature 0.0 and json_object response format. Offline cached responses in cached_responses/ for zero-credential deterministic replay."
     },
     "skills": {
-      "status": "used",
-      "files": [
-        "skills/generate-assignment-data/SKILL.md"
-      ],
-      "notes": "Referenced generate-assignment-data skill for formatting seed fixture extensions."
+      "status": "not-used",
+      "files": [],
+      "notes": "No external skills installed; standard Antigravity IDE and Groq Llama 3.3 were used directly."
     },
     "agent_instructions_and_subagents": {
       "status": "not-used",

@@ -109,4 +109,25 @@ The pytest suite in [`tests/test_reference_cases.py`](tests/test_reference_cases
 | **Schema** | Pydantic model validation on extraction schemas | `test_pydantic_schema_validation` | **PASSED** |
 | **Full Suite** | All 10 requests match `expected_results.json` end-to-end | `test_all_10_requests_end_to_end` | **PASSED** |
 
-**Summary: 12 passed in ~1.6s (100% pass rate).**
+**Summary: 14 passed in ~1.8s (100% pass rate).**
+
+---
+
+## ⏱️ Time Spent & Assumptions
+
+### Time Investment (~6.5 hours total):
+- **Data Preparation & Validation (45m):** Analyzing domain rules, extending seed to 10 comprehensive cases, calculating ground truth in `expected_results.json`.
+- **Core Processing Engine (2.5h):** Pydantic schema validation, catalog matcher, integer cents arithmetic with `ROUND_HALF_UP`, and SQLite storage.
+- **LLM Integration & Real Replay (1.5h):** Live Groq API calls (`llama-3.3-70b-versatile`), caching provenance, idempotency guard, and explicit error handling.
+- **UI & Analytics Dashboard (1h):** Streamlit review queue, side-by-side review cards, dynamic database-backed analytics, and inline reviewer forms.
+- **Testing & Documentation (45m):** 14 pytest cases, AI workflow manifest, and failure incident documentation.
+
+### Data Assumptions & Rule Ambiguities Recorded:
+1. **Container Rule (Rule 1):** In accordance with `domain.md`, container terms (*"box"*, *"pack"*, *"crate"*) have no stated unit counts and are strictly never guessed.
+2. **"Usual Cable" Ambiguity (Rule 3):** Handled as ambiguous between `CAB-1` (1 m) and `CAB-2` (2 m) because the catalog provides no prior customer purchase history.
+3. **Reprocessing Duplicate Rule (Rule 4):** Identical `order_ref` values are recorded as `duplicate` for operations queue visibility, but do not create new drafts or inflate totals.
+
+### Known Limitations:
+- **Single Currency:** Operates exclusively in USD integer cents; multi-currency exchange rates are out of current scope.
+- **Input Modality:** Processes plain text and email strings; image and PDF attachments require an external OCR/multimodal module.
+
