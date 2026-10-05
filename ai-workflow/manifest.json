@@ -1,0 +1,66 @@
+{
+  "template": true,
+  "instructions": "Replace template values with exercise-specific records. Add entries for every configuration used, including earlier versions or their Git commits. No credentials.",
+  "categories": {
+    "development_tools_and_models": {
+      "status": "complete-before-submission",
+      "files": [],
+      "notes": ""
+    },
+    "plugins_and_extensions": {
+      "status": "complete-before-submission",
+      "files": [],
+      "notes": ""
+    },
+    "application_models_and_parameters": {
+      "status": "complete-before-submission",
+      "files": [],
+      "notes": ""
+    },
+    "skills": {
+      "status": "complete-before-submission",
+      "files": [],
+      "notes": ""
+    },
+    "agent_instructions_and_subagents": {
+      "status": "complete-before-submission",
+      "files": [],
+      "notes": ""
+    },
+    "hooks_and_scripts": {
+      "status": "complete-before-submission",
+      "files": [],
+      "notes": ""
+    },
+    "prompts_and_rules": {
+      "status": "complete-before-submission",
+      "files": [],
+      "notes": ""
+    },
+    "tool_and_mcp_settings": {
+      "status": "complete-before-submission",
+      "files": [],
+      "notes": ""
+    },
+    "permissions_and_environment_names": {
+      "status": "complete-before-submission",
+      "files": [],
+      "notes": ""
+    }
+  },
+  "configuration_records": [
+    {
+      "name": "",
+      "category": "",
+      "purpose": "",
+      "original_path_or_scope": "",
+      "saved_path": "",
+      "version_or_commit": "",
+      "used_during": "",
+      "status": "",
+      "redactions": []
+    }
+  ],
+  "replay_command": "",
+  "workflow_example_path": ""
+}

@@ -1,0 +1,41 @@
+{
+  "catalog": [
+    {
+      "sku": "CAB-1",
+      "name": "USB-C cable 1 m",
+      "unit_cents": 2000
+    },
+    {
+      "sku": "CAB-2",
+      "name": "USB-C cable 2 m",
+      "unit_cents": 3000
+    },
+    {
+      "sku": "HUB-1",
+      "name": "USB hub",
+      "unit_cents": 5000
+    }
+  ],
+  "requests": [
+    {
+      "id": "R1",
+      "order_ref": "O1",
+      "text": "Please send 2 individual CAB-1 cables."
+    },
+    {
+      "id": "R2",
+      "order_ref": "O2",
+      "text": "Please send one Moon adapter."
+    },
+    {
+      "id": "R3",
+      "order_ref": "O3",
+      "text": "Send two boxes of the usual cable."
+    },
+    {
+      "id": "R4",
+      "order_ref": "O1",
+      "text": "Please send 2 individual CAB-1 cables."
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+[
+  {
+    "id": "R1",
+    "outcome": "draft",
+    "sku": "CAB-1",
+    "quantity": 2,
+    "total_cents": 4000
+  },
+  {
+    "id": "R2",
+    "outcome": "needs-clarification",
+    "reason": "unknown product"
+  },
+  {
+    "id": "R3",
+    "outcome": "needs-clarification",
+    "reason": "ambiguous product and box quantity"
+  },
+  {
+    "id": "R4",
+    "outcome": "duplicate",
+    "same_order_as": "R1",
+    "new_drafts": 0
+  }
+]

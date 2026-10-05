@@ -1,0 +1,13 @@
+{
+  "version": "2026-10-02",
+  "fictional": true,
+  "tasks": [
+    "orders",
+    "invoices",
+    "evidence",
+    "data",
+    "incidents",
+    "modernization",
+    "computer-use"
+  ]
+}
