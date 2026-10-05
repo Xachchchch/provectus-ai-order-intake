@@ -1,0 +1,27 @@
+{
+  "request_id": "R6",
+  "order_ref": "O6",
+  "raw_text": "Need 12 units of CAB-2 and 1 unit of HUB-1.",
+  "items": [
+    {
+      "raw_product_text": "CAB-2",
+      "raw_quantity_text": "12 units",
+      "extracted_sku": "CAB-2",
+      "extracted_quantity": 12,
+      "is_quantity_ambiguous": false,
+      "ambiguity_reason": null
+    },
+    {
+      "raw_product_text": "HUB-1",
+      "raw_quantity_text": "1 unit",
+      "extracted_sku": "HUB-1",
+      "extracted_quantity": 1,
+      "is_quantity_ambiguous": false,
+      "ambiguity_reason": null
+    }
+  ],
+  "confidence": 0.99,
+  "is_cached": true,
+  "model": "llama-3.3-70b-versatile",
+  "cached_at": "2026-10-05T20:00:00Z"
+}

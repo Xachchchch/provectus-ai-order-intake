@@ -1,0 +1,19 @@
+{
+  "request_id": "R9",
+  "order_ref": "O9",
+  "raw_text": "Ship 3 boxes of CAB-1 to our warehouse.",
+  "items": [
+    {
+      "raw_product_text": "CAB-1",
+      "raw_quantity_text": "3 boxes",
+      "extracted_sku": "CAB-1",
+      "extracted_quantity": null,
+      "is_quantity_ambiguous": true,
+      "ambiguity_reason": "ambiguous quantity: box"
+    }
+  ],
+  "confidence": 0.95,
+  "is_cached": true,
+  "model": "llama-3.3-70b-versatile",
+  "cached_at": "2026-10-05T20:00:00Z"
+}

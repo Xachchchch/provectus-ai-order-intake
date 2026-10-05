@@ -1,0 +1,19 @@
+{
+  "request_id": "R4",
+  "order_ref": "O1",
+  "raw_text": "Please send 2 individual CAB-1 cables.",
+  "items": [
+    {
+      "raw_product_text": "CAB-1 cables",
+      "raw_quantity_text": "2 individual",
+      "extracted_sku": "CAB-1",
+      "extracted_quantity": 2,
+      "is_quantity_ambiguous": false,
+      "ambiguity_reason": null
+    }
+  ],
+  "confidence": 0.98,
+  "is_cached": true,
+  "model": "llama-3.3-70b-versatile",
+  "cached_at": "2026-10-05T20:00:00Z"
+}

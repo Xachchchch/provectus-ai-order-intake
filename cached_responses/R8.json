@@ -1,0 +1,19 @@
+{
+  "request_id": "R8",
+  "order_ref": "O8",
+  "raw_text": "We require 5 USB-C cables urgently.",
+  "items": [
+    {
+      "raw_product_text": "USB-C cables",
+      "raw_quantity_text": "5",
+      "extracted_sku": null,
+      "extracted_quantity": 5,
+      "is_quantity_ambiguous": false,
+      "ambiguity_reason": null
+    }
+  ],
+  "confidence": 0.94,
+  "is_cached": true,
+  "model": "llama-3.3-70b-versatile",
+  "cached_at": "2026-10-05T20:00:00Z"
+}

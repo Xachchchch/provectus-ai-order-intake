@@ -1,0 +1,19 @@
+{
+  "request_id": "R10",
+  "order_ref": "O10",
+  "raw_text": "Please send 15 Solar connectors.",
+  "items": [
+    {
+      "raw_product_text": "Solar connectors",
+      "raw_quantity_text": "15",
+      "extracted_sku": null,
+      "extracted_quantity": 15,
+      "is_quantity_ambiguous": false,
+      "ambiguity_reason": null
+    }
+  ],
+  "confidence": 0.91,
+  "is_cached": true,
+  "model": "llama-3.3-70b-versatile",
+  "cached_at": "2026-10-05T20:00:00Z"
+}

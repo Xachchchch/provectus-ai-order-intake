@@ -1,0 +1,125 @@
+[
+  {
+    "id": "R1",
+    "order_ref": "O1",
+    "outcome": "draft",
+    "sku": "CAB-1",
+    "quantity": 2,
+    "line_items": [
+      {
+        "sku": "CAB-1",
+        "quantity": 2,
+        "unit_cents": 2000,
+        "discount_cents": 0,
+        "total_cents": 4000
+      }
+    ],
+    "total_cents": 4000
+  },
+  {
+    "id": "R2",
+    "order_ref": "O2",
+    "outcome": "needs-clarification",
+    "reason": "unknown product",
+    "flagged_item": "Moon adapter"
+  },
+  {
+    "id": "R3",
+    "order_ref": "O3",
+    "outcome": "needs-clarification",
+    "reason": "ambiguous product and box quantity",
+    "flagged_item": "the usual cable",
+    "flagged_quantity": "two boxes"
+  },
+  {
+    "id": "R4",
+    "order_ref": "O1",
+    "outcome": "duplicate",
+    "same_order_as": "R1",
+    "new_drafts": 0
+  },
+  {
+    "id": "R5",
+    "order_ref": "O5",
+    "outcome": "draft",
+    "sku": "CAB-1",
+    "quantity": 10,
+    "line_items": [
+      {
+        "sku": "CAB-1",
+        "quantity": 10,
+        "unit_cents": 2000,
+        "discount_cents": 2000,
+        "total_cents": 18000
+      }
+    ],
+    "total_cents": 18000
+  },
+  {
+    "id": "R6",
+    "order_ref": "O6",
+    "outcome": "draft",
+    "line_items": [
+      {
+        "sku": "CAB-2",
+        "quantity": 12,
+        "unit_cents": 3000,
+        "discount_cents": 3600,
+        "total_cents": 32400
+      },
+      {
+        "sku": "HUB-1",
+        "quantity": 1,
+        "unit_cents": 5000,
+        "discount_cents": 0,
+        "total_cents": 5000
+      }
+    ],
+    "total_cents": 37400
+  },
+  {
+    "id": "R7",
+    "order_ref": "O7",
+    "outcome": "needs-clarification",
+    "reason": "ambiguous quantity: pack",
+    "flagged_item": "USB hub",
+    "flagged_quantity": "a pack"
+  },
+  {
+    "id": "R8",
+    "order_ref": "O8",
+    "outcome": "needs-clarification",
+    "reason": "ambiguous product: multiple matching catalog items (CAB-1, CAB-2)",
+    "flagged_item": "USB-C cables"
+  },
+  {
+    "id": "R9",
+    "order_ref": "O9",
+    "outcome": "needs-clarification",
+    "reason": "ambiguous quantity: box",
+    "flagged_item": "CAB-1",
+    "flagged_quantity": "3 boxes"
+  },
+  {
+    "id": "R10",
+    "order_ref": "O10",
+    "outcome": "needs-clarification",
+    "reason": "unknown product",
+    "flagged_item": "Solar connectors",
+    "post_correction": {
+      "outcome": "reviewed",
+      "sku": "HUB-1",
+      "quantity": 15,
+      "line_items": [
+        {
+          "sku": "HUB-1",
+          "quantity": 15,
+          "unit_cents": 5000,
+          "discount_cents": 7500,
+          "total_cents": 67500
+        }
+      ],
+      "total_cents": 67500
+    }
+  }
+]

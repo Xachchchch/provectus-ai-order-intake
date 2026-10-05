@@ -1,0 +1,19 @@
+{
+  "request_id": "R2",
+  "order_ref": "O2",
+  "raw_text": "Please send one Moon adapter.",
+  "items": [
+    {
+      "raw_product_text": "Moon adapter",
+      "raw_quantity_text": "one",
+      "extracted_sku": null,
+      "extracted_quantity": 1,
+      "is_quantity_ambiguous": false,
+      "ambiguity_reason": null
+    }
+  ],
+  "confidence": 0.95,
+  "is_cached": true,
+  "model": "llama-3.3-70b-versatile",
+  "cached_at": "2026-10-05T20:00:00Z"
+}

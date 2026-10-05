@@ -1,0 +1,19 @@
+{
+  "request_id": "R7",
+  "order_ref": "O7",
+  "raw_text": "Please supply a pack of USB hub.",
+  "items": [
+    {
+      "raw_product_text": "USB hub",
+      "raw_quantity_text": "a pack",
+      "extracted_sku": "HUB-1",
+      "extracted_quantity": null,
+      "is_quantity_ambiguous": true,
+      "ambiguity_reason": "ambiguous quantity: pack"
+    }
+  ],
+  "confidence": 0.92,
+  "is_cached": true,
+  "model": "llama-3.3-70b-versatile",
+  "cached_at": "2026-10-05T20:00:00Z"
+}

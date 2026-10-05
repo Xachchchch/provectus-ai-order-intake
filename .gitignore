@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.db
+.pytest_cache/
+.env
+flatten_codebase.py
+codebase_flattened.txt

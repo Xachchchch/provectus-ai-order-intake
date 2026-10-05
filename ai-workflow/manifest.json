@@ -1,66 +1,88 @@
 {
-  "template": true,
+  "template": false,
   "instructions": "Replace template values with exercise-specific records. Add entries for every configuration used, including earlier versions or their Git commits. No credentials.",
   "categories": {
     "development_tools_and_models": {
-      "status": "complete-before-submission",
+      "status": "used",
       "files": [],
-      "notes": ""
+      "notes": "Antigravity IDE paired with Gemini 3.8 Flash (High) used for development assistance, code generation, and test creation."
     },
     "plugins_and_extensions": {
-      "status": "complete-before-submission",
+      "status": "not-used",
       "files": [],
-      "notes": ""
+      "notes": "No external plugins or IDE extensions were required."
     },
     "application_models_and_parameters": {
-      "status": "complete-before-submission",
-      "files": [],
-      "notes": ""
+      "status": "used",
+      "files": [
+        "src/extractor.py"
+      ],
+      "notes": "llama-3.3-70b-versatile via Groq and gpt-4o-mini via OpenAI with temperature 0.0 and json_object response format. Offline cached responses in cached_responses/ for zero-credential deterministic replay."
     },
     "skills": {
-      "status": "complete-before-submission",
-      "files": [],
-      "notes": ""
+      "status": "used",
+      "files": [
+        "skills/generate-assignment-data/SKILL.md"
+      ],
+      "notes": "Referenced generate-assignment-data skill for formatting seed fixture extensions."
     },
     "agent_instructions_and_subagents": {
-      "status": "complete-before-submission",
+      "status": "not-used",
       "files": [],
-      "notes": ""
+      "notes": "Single pair programming agent session."
     },
     "hooks_and_scripts": {
-      "status": "complete-before-submission",
+      "status": "not-used",
       "files": [],
-      "notes": ""
+      "notes": "No custom git hooks or background scripts."
     },
     "prompts_and_rules": {
-      "status": "complete-before-submission",
-      "files": [],
-      "notes": ""
+      "status": "used",
+      "files": [
+        "src/extractor.py",
+        "tasks/orders/domain.md"
+      ],
+      "notes": "System prompt enforcing strict unit quantities, forbidding packaging inference (box, pack), and returning structured JSON."
     },
     "tool_and_mcp_settings": {
-      "status": "complete-before-submission",
+      "status": "not-used",
       "files": [],
-      "notes": ""
+      "notes": "Default toolset used."
     },
     "permissions_and_environment_names": {
-      "status": "complete-before-submission",
-      "files": [],
-      "notes": ""
+      "status": "used",
+      "files": [
+        "ai-workflow/.env.example"
+      ],
+      "notes": "Environment variables GROQ_API_KEY, GROQ_MODEL, OPENAI_API_KEY, OPENAI_MODEL."
     }
   },
   "configuration_records": [
     {
-      "name": "",
-      "category": "",
-      "purpose": "",
-      "original_path_or_scope": "",
-      "saved_path": "",
-      "version_or_commit": "",
-      "used_during": "",
-      "status": "",
+      "name": "Order Extractor System Prompt",
+      "category": "prompts_and_rules",
+      "purpose": "Extract structured product mentions and quantities while strictly forbidding guessing box or pack unit counts.",
+      "original_path_or_scope": "src/extractor.py",
+      "saved_path": "src/extractor.py",
+      "version_or_commit": "HEAD",
+      "used_during": "Order intake extraction and exception detection",
+      "status": "active",
       "redactions": []
+    },
+    {
+      "name": "Groq / OpenAI LLM Configuration",
+      "category": "application_models_and_parameters",
+      "purpose": "JSON extraction with zero temperature and cached replay fallback.",
+      "original_path_or_scope": ".env",
+      "saved_path": "ai-workflow/.env.example",
+      "version_or_commit": "HEAD",
+      "used_during": "LLM extraction",
+      "status": "active",
+      "redactions": [
+        "API keys redacted in repository"
+      ]
     }
   ],
-  "replay_command": "",
-  "workflow_example_path": ""
+  "replay_command": "pytest tests/test_reference_cases.py -v",
+  "workflow_example_path": "ai-workflow/README.md"
 }

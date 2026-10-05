@@ -1,0 +1,19 @@
+{
+  "request_id": "R5",
+  "order_ref": "O5",
+  "raw_text": "Order 10 units of USB-C cable 1 m.",
+  "items": [
+    {
+      "raw_product_text": "USB-C cable 1 m",
+      "raw_quantity_text": "10 units",
+      "extracted_sku": "CAB-1",
+      "extracted_quantity": 10,
+      "is_quantity_ambiguous": false,
+      "ambiguity_reason": null
+    }
+  ],
+  "confidence": 0.99,
+  "is_cached": true,
+  "model": "llama-3.3-70b-versatile",
+  "cached_at": "2026-10-05T20:00:00Z"
+}
