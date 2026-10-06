@@ -1,5 +1,5 @@
 # AI Order Intake & Exception Handling Platform
-**Senior AI Engineer Assessment — Alternative A**
+**Junior AI Engineer Assessment — Alternative A**
 
 A production-grade, deterministic AI Order Intake pipeline that parses unstructured natural language purchase requests from individual email text files, validates items against an official product catalog using an isolated lookup tool with explicit evidence persistence, applies bulk discount pricing with integer cents arithmetic, flags ambiguities/unknowns with automated inquiry email drafts, prevents duplicate orders, and provides an interactive Streamlit operations queue with dynamic multi-line reviewer corrections and structured database analytics.
 
@@ -71,6 +71,56 @@ client-ai-starter-pack/
 ├── requirements.txt               # Python dependencies (pytest, streamlit, openai, pydantic)
 └── README.md                      # Platform documentation
 ```
+
+---
+
+## 🏗️ Architecture: Native LLM Function Calling
+
+### Agentic Tool-Use Loop (`src/extractor.py`)
+
+The extractor implements true **native function calling** per the OpenAI/Groq tool-use API — not a post-hoc Python dispatch after JSON extraction:
+
+```
+User Request Text
+       │
+       ▼
+┌─────────────────────────────┐
+│  LLM (llama-3.3-70b /       │ ← tools=[CATALOG_LOOKUP_TOOL]
+│   gpt-4o-mini)              │
+└──────────┬──────────────────┘
+           │ finish_reason="tool_calls"
+           ▼
+  lookup_catalog(query="USB hub")   ← local Python function
+           │
+           ▼  tool role message
+┌─────────────────────────────┐
+│  LLM (final answer turn)    │ ← finish_reason="stop"
+└──────────┬──────────────────┘
+           │
+           ▼
+  Pydantic ExtractionPayload  ← strict schema validation
+  + tool_calls_log persisted in SQLite
+```
+
+### Pydantic Container-Term Guardrail
+
+A `@model_validator(mode="after")` on `ExtractedOrderItem` deterministically intercepts any hallucinated integer for container-term quantities:
+
+```python
+CONTAINER_TERMS = {"box", "boxes", "pack", "packs", "crate", ...}
+# If the model outputs extracted_quantity=12 for "a box of cables",
+# the validator resets it to None and sets is_quantity_ambiguous=True.
+```
+
+### Strict Error Policy (No Silent Regex Fallback)
+
+| Condition | Behaviour |
+|---|---|
+| Cache hit | Serve cached payload (always preferred) |
+| API key present, no cache | Live LLM call with tool-use → cache result |
+| No cache + no API key | Raise `ExtractionError` → order saved as `failed / EXTRACTION_FAILED` |
+
+The `fallback_rule_based_extractor` has been **permanently removed**. Failures are explicit and visible in the UI analytics.
 
 ---
 

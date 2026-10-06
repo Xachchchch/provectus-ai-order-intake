@@ -5,7 +5,7 @@ import os
 from typing import Any, Dict, List, Optional
 
 from src.catalog import CATALOG, MatchStatus, get_catalog_item, lookup_catalog_tool, match_catalog_item
-from src.extractor import extract_order_information
+from src.extractor import ExtractionError, extract_order_information
 from src.pricing import calculate_order_pricing
 from src.storage import (
     DEFAULT_DB_PATH,
@@ -194,12 +194,40 @@ def process_request(
             }
 
     # 2. Information Extraction
-    extracted = extract_order_information(
-        request_id=request_id,
-        order_ref=order_ref,
-        text=text,
-        force_replay=force_replay,
-    )
+    try:
+        extracted = extract_order_information(
+            request_id=request_id,
+            order_ref=order_ref,
+            text=text,
+            force_replay=force_replay,
+        )
+    except ExtractionError as exc:
+        # No cache and no API key - explicit failure, no silent regex fallback
+        err_msg = str(exc)
+        order_data = {
+            "request_id": request_id,
+            "order_ref": order_ref,
+            "raw_text": text,
+            "status": "failed",
+            "line_items": [],
+            "gross_cents": 0,
+            "discount_cents": 0,
+            "total_cents": 0,
+            "notes": f"Extraction failed: {err_msg}",
+            "is_cached": False,
+            "model": "none",
+            "catalog_evidence": [],
+            "exception_code": ExceptionCode.EXTRACTION_FAILED.value,
+        }
+        save_order(order_data, db_path=db_path)
+        return {
+            "id": request_id,
+            "order_ref": order_ref,
+            "outcome": "failed",
+            "reason": err_msg,
+            "error": err_msg,
+            "exception_code": ExceptionCode.EXTRACTION_FAILED.value,
+        }
 
     is_cached = extracted.get("is_cached", True)
     model_name = extracted.get("model", "llama-3.3-70b-versatile")

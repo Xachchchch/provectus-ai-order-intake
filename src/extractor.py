@@ -1,15 +1,60 @@
-"""LLM extractor with offline replay caching, Pydantic validation, and explicit cache labeling."""
+"""LLM extractor with native function calling, Pydantic validation, and strict offline replay."""
 
 import json
 import os
 import re
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field, ValidationError
+
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 
 CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "cached_responses")
 
-# Pydantic Schemas for Strict Data Validation
+
+# ---------------------------------------------------------------------------
+# Custom exception - raised instead of silently falling back to regex
+# ---------------------------------------------------------------------------
+class ExtractionError(Exception):
+    """Raised when no cached response exists and no LLM API key is configured."""
+
+
+# ---------------------------------------------------------------------------
+# Native OpenAI / Groq Tool Schema for the catalog lookup
+# ---------------------------------------------------------------------------
+CATALOG_LOOKUP_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "lookup_catalog",
+        "description": (
+            "Searches the official product catalog by SKU or product name to verify "
+            "availability, canonical SKU, and unit pricing."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Product SKU (e.g. CAB-1) or natural language description (e.g. USB hub)",
+                }
+            },
+            "required": ["query"],
+        },
+    },
+}
+
+
+# ---------------------------------------------------------------------------
+# Container / vague-quantity terms - deterministic Pydantic guard
+# ---------------------------------------------------------------------------
+CONTAINER_TERMS = {
+    "box", "boxes", "pack", "packs", "crate", "crates",
+    "case", "cases", "several", "bundle", "a couple",
+}
+
+
+# ---------------------------------------------------------------------------
+# Pydantic Schemas
+# ---------------------------------------------------------------------------
 class ExtractedOrderItem(BaseModel):
     raw_product_text: str = Field(description="Raw text snippet representing the requested product")
     raw_quantity_text: str = Field(description="Raw text snippet representing the quantity")
@@ -17,6 +62,21 @@ class ExtractedOrderItem(BaseModel):
     extracted_quantity: Optional[int] = Field(default=None, description="Positive whole number of units or null")
     is_quantity_ambiguous: bool = Field(default=False, description="True if container or vague quantity term was used")
     ambiguity_reason: Optional[str] = Field(default=None, description="Reason why quantity is ambiguous")
+
+    @model_validator(mode="after")
+    def enforce_container_ambiguity_guard(self) -> "ExtractedOrderItem":
+        text_to_check = f"{self.raw_quantity_text} {self.raw_product_text}".lower()
+        for term in CONTAINER_TERMS:
+            if re.search(r"\b" + re.escape(term) + r"\b", text_to_check):
+                self.extracted_quantity = None
+                self.is_quantity_ambiguous = True
+                if not self.ambiguity_reason:
+                    self.ambiguity_reason = (
+                        f"Quantity expressed in container term '{term}' "
+                        "which cannot be inferred as units."
+                    )
+                break
+        return self
 
 
 class ExtractionPayload(BaseModel):
@@ -28,95 +88,124 @@ class ExtractionPayload(BaseModel):
     is_cached: bool = False
     model: str = "unknown"
     cached_at: Optional[str] = None
+    tool_calls_log: List[Dict[str, Any]] = Field(default_factory=list)
 
 
-# Extraction prompt instructions
+# ---------------------------------------------------------------------------
+# Extraction prompt
+# ---------------------------------------------------------------------------
 SYSTEM_PROMPT = """You are an accurate, strict order intake information extractor.
 Given a customer's raw order request text, extract all requested items and quantities.
+You have access to a 'lookup_catalog' tool - call it for EVERY product mentioned to
+verify the canonical SKU and pricing BEFORE producing the final JSON.
 
 CRITICAL RULES:
 1. Extract exact product names or SKU codes mentioned.
 2. Quantities must be positive whole numbers of individual units.
-3. NEVER guess or infer how many items a container contains (e.g. "box", "pack", "crate", "bundle", "case", "several", "a couple").
-   If any such vague or container term is used, set "extracted_quantity": null, "is_quantity_ambiguous": true, and "ambiguity_reason" describing the ambiguity.
-4. If an exact SKU from the catalog (CAB-1, CAB-2, HUB-1) is identified, populate "extracted_sku", otherwise set "extracted_sku": null.
-5. Return ONLY a valid JSON object matching the requested schema.
+3. NEVER guess or infer how many items a container contains (e.g. "box", "pack", "crate",
+   "bundle", "case", "several", "a couple").
+   If any such vague or container term is used, set "extracted_quantity": null,
+   "is_quantity_ambiguous": true, and "ambiguity_reason" describing the ambiguity.
+4. If an exact SKU from the catalog (CAB-1, CAB-2, HUB-1) is identified via the lookup,
+   populate "extracted_sku", otherwise set "extracted_sku": null.
+5. Return ONLY a valid JSON object matching the requested schema after all tool calls are done.
 """
 
 
+# ---------------------------------------------------------------------------
+# Cache helpers
+# ---------------------------------------------------------------------------
 def load_cached_response(request_id: str, cache_dir: str = CACHE_DIR) -> Optional[Dict[str, Any]]:
-    """Load cached extraction response for offline replay with Pydantic validation."""
     cache_file = os.path.join(cache_dir, f"{request_id}.json")
     if os.path.exists(cache_file):
         with open(cache_file, "r", encoding="utf-8") as f:
             raw_data = json.load(f)
-            # Label cache explicitly
-            raw_data["is_cached"] = True
-            if "model" not in raw_data:
-                raw_data["model"] = "llama-3.3-70b-versatile"
-            # Validate through Pydantic
-            payload = ExtractionPayload.model_validate(raw_data)
-            return payload.model_dump()
+        raw_data["is_cached"] = True
+        if "model" not in raw_data:
+            raw_data["model"] = "llama-3.3-70b-versatile"
+        raw_data.setdefault("tool_calls_log", [])
+        payload = ExtractionPayload.model_validate(raw_data)
+        return payload.model_dump()
     return None
 
 
 def save_cached_response(request_id: str, data: Dict[str, Any], cache_dir: str = CACHE_DIR) -> None:
-    """Save extraction response to cache for deterministic replay."""
     os.makedirs(cache_dir, exist_ok=True)
     cache_file = os.path.join(cache_dir, f"{request_id}.json")
     with open(cache_file, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
 
 
-def fallback_rule_based_extractor(request_id: str, order_ref: str, text: str) -> Dict[str, Any]:
-    """
-    Deterministic rule-based extractor used only when offline cache and API keys are missing.
-    Validated strictly through Pydantic schema.
-    """
-    vague_quantities = ["box", "boxes", "pack", "packs", "case", "cases", "several", "crate", "crates"]
-    
-    is_ambiguous = False
-    ambiguity_reason = None
-    for vq in vague_quantities:
-        if re.search(r"\b" + re.escape(vq) + r"\b", text, re.IGNORECASE):
-            is_ambiguous = True
-            ambiguity_reason = f"ambiguous quantity: {vq}"
-            break
+# ---------------------------------------------------------------------------
+# Live LLM extraction with native tool calling
+# ---------------------------------------------------------------------------
+def _run_live_extraction(
+    client: Any,
+    model: str,
+    request_id: str,
+    order_ref: str,
+    text: str,
+) -> Dict[str, Any]:
+    from src.catalog import lookup_catalog_tool
 
-    skus_found = re.findall(r"\b(CAB-1|CAB-2|HUB-1)\b", text, re.IGNORECASE)
-    
-    numbers = re.findall(r"\b(\d+)\b", text)
-    quantity = None
-    if not is_ambiguous and numbers:
-        quantity = int(numbers[0])
-    elif not is_ambiguous:
-        word_to_num = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "ten": 10, "twelve": 12, "fifteen": 15}
-        for word, num in word_to_num.items():
-            if re.search(r"\b" + word + r"\b", text, re.IGNORECASE):
-                quantity = num
-                break
+    user_content = f'Extract order details for request:\nRequest ID: {request_id}\nOrder Reference: {order_ref}\nCustomer text: "{text}"\n\nAfter calling lookup_catalog for every product, return JSON matching this schema:\n{{\n  "request_id": "{request_id}",\n  "order_ref": "{order_ref}",\n  "raw_text": "{text}",\n  "items": [\n    {{\n      "raw_product_text": "<text>",\n      "raw_quantity_text": "<text>",\n      "extracted_sku": "<SKU or null>",\n      "extracted_quantity": "<int or null>",\n      "is_quantity_ambiguous": "<bool>",\n      "ambiguity_reason": "<reason or null>"\n    }}\n  ],\n  "confidence": 0.95\n}}\n'
 
-    item = ExtractedOrderItem(
-        raw_product_text=text,
-        raw_quantity_text=str(quantity) if quantity else ("vague" if is_ambiguous else "unspecified"),
-        extracted_sku=skus_found[0].upper() if skus_found else None,
-        extracted_quantity=quantity if not is_ambiguous else None,
-        is_quantity_ambiguous=is_ambiguous,
-        ambiguity_reason=ambiguity_reason,
+    messages: List[Dict[str, Any]] = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": user_content},
+    ]
+    tool_calls_log: List[Dict[str, Any]] = []
+
+    for _round in range(8):
+        response = client.chat.completions.create(
+            model=model,
+            temperature=0.0,
+            messages=messages,
+            tools=[CATALOG_LOOKUP_TOOL],
+            tool_choice="auto",
+        )
+
+        choice = response.choices[0]
+        finish_reason = choice.finish_reason
+        assistant_msg = choice.message
+
+        messages.append(assistant_msg.model_dump(exclude_none=True))
+
+        if finish_reason == "tool_calls" and assistant_msg.tool_calls:
+            for tc in assistant_msg.tool_calls:
+                fn_args = json.loads(tc.function.arguments)
+                query = fn_args.get("query", "")
+                tool_result = lookup_catalog_tool(query)
+                tool_calls_log.append({
+                    "tool_call_id": tc.id,
+                    "function": tc.function.name,
+                    "arguments": fn_args,
+                    "result": tool_result,
+                })
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": json.dumps(tool_result),
+                })
+        else:
+            content = assistant_msg.content or "{}"
+            content = re.sub(r"^{3}(?:json)?\s*", "", content.strip())
+            content = re.sub(r"\s*{3}$", "", content.strip())
+            raw_json = json.loads(content)
+            raw_json["is_cached"] = False
+            raw_json["model"] = model
+            raw_json["tool_calls_log"] = tool_calls_log
+            validated_payload = ExtractionPayload.model_validate(raw_json)
+            return validated_payload.model_dump()
+
+    raise ExtractionError(
+        f"LLM did not produce a final answer after 8 tool-call rounds for {request_id}."
     )
 
-    payload = ExtractionPayload(
-        request_id=request_id,
-        order_ref=order_ref,
-        raw_text=text,
-        items=[item],
-        confidence=0.85,
-        is_cached=False,
-        model="rule_based_fallback",
-    )
-    return payload.model_dump()
 
-
+# ---------------------------------------------------------------------------
+# Public entry point
+# ---------------------------------------------------------------------------
 def extract_order_information(
     request_id: str,
     order_ref: str,
@@ -126,29 +215,35 @@ def extract_order_information(
 ) -> Dict[str, Any]:
     """
     Extract order items and quantities from raw text.
-    
-    1. If force_replay is True, or neither GROQ_API_KEY nor OPENAI_API_KEY is configured,
-       loads from pre-saved cached_responses/{request_id}.json.
-    2. If API keys are present and force_replay is False, queries the LLM API,
-       validates schema strictly with Pydantic, stores to cache, and returns structured data.
-    3. If LLM returns an invalid schema or fails, returns an explicit failed status instead of silent guessing.
+
+    Resolution order:
+    1. force_replay=True -> load from cache, raise ExtractionError if not cached.
+    2. Cache hit -> return cached payload.
+    3. API key present -> live LLM call with native tool calling -> cache -> return.
+    4. No cache + no API key -> raise ExtractionError (NO silent regex fallback).
     """
     groq_key = os.getenv("GROQ_API_KEY")
     openai_key = os.getenv("OPENAI_API_KEY")
 
-    # If force_replay or neither API key is available, check cache
-    if force_replay or (not groq_key and not openai_key):
+    if force_replay:
         cached = load_cached_response(request_id, cache_dir=cache_dir)
         if cached:
             return cached
-        return fallback_rule_based_extractor(request_id, order_ref, text)
+        raise ExtractionError(
+            f"force_replay=True but no cached response found for '{request_id}'."
+        )
 
-    # If cache exists, use cache for fast deterministic execution
     cached = load_cached_response(request_id, cache_dir=cache_dir)
     if cached:
         return cached
 
-    # Attempt live LLM extraction with Groq or OpenAI
+    if not groq_key and not openai_key:
+        raise ExtractionError(
+            f"No cached response found for '{request_id}' and no active LLM API key "
+            "(GROQ_API_KEY or OPENAI_API_KEY) is set. "
+            "Provide an API key or add a pre-generated cache file."
+        )
+
     try:
         from openai import OpenAI
 
@@ -159,52 +254,11 @@ def extract_order_information(
             client = OpenAI(api_key=openai_key)
             model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
-        user_content = f"""Extract order details for request:
-Request ID: {request_id}
-Order Reference: {order_ref}
-Customer text: "{text}"
-
-Return JSON matching schema:
-{{
-  "request_id": "{request_id}",
-  "order_ref": "{order_ref}",
-  "raw_text": "{text}",
-  "items": [
-    {{
-      "raw_product_text": "<text>",
-      "raw_quantity_text": "<text>",
-      "extracted_sku": "<SKU or null>",
-      "extracted_quantity": <int or null>,
-      "is_quantity_ambiguous": <bool>,
-      "ambiguity_reason": "<reason or null>"
-    }}
-  ],
-  "confidence": 0.95
-}}
-"""
-        response = client.chat.completions.create(
-            model=model,
-            temperature=0.0,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_content},
-            ],
-            response_format={"type": "json_object"},
-        )
-        content = response.choices[0].message.content
-        raw_json = json.loads(content)
-        raw_json["is_cached"] = False
-        raw_json["model"] = model
-
-        # Strict Pydantic validation
-        validated_payload = ExtractionPayload.model_validate(raw_json)
-        validated_dict = validated_payload.model_dump()
-
-        save_cached_response(request_id, validated_dict, cache_dir=cache_dir)
-        return validated_dict
+        result = _run_live_extraction(client, model, request_id, order_ref, text)
+        save_cached_response(request_id, result, cache_dir=cache_dir)
+        return result
 
     except ValidationError as val_err:
-        # Schema validation error - do not silently fallback, return explicit failed status
         return {
             "request_id": request_id,
             "order_ref": order_ref,
@@ -213,10 +267,11 @@ Return JSON matching schema:
             "error_type": "pydantic_validation_error",
             "error_message": str(val_err),
             "is_cached": False,
-            "model": model if 'model' in locals() else "unknown",
+            "model": locals().get("model", "unknown"),
         }
+    except ExtractionError:
+        raise
     except Exception as exc:
-        # Model / API call failed
         return {
             "request_id": request_id,
             "order_ref": order_ref,
@@ -225,5 +280,5 @@ Return JSON matching schema:
             "error_type": "llm_invocation_error",
             "error_message": str(exc),
             "is_cached": False,
-            "model": model if 'model' in locals() else "unknown",
+            "model": locals().get("model", "unknown"),
         }
