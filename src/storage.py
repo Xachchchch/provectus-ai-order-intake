@@ -364,11 +364,14 @@ def apply_manual_correction(
 ) -> Dict[str, Any]:
     """
     Applies a reviewer manual correction to an existing order:
-    1. Re-prices items deterministically using catalog unit prices and bulk discount rules across all lines.
-    2. Updates status to 'reviewed' (strictly distinguishing a human-reviewed order from an unreviewed draft).
-    3. Records the event in review_history with previous and new states.
-    4. Persists changes to SQLite while preserving original created_at.
+    1. Validates all items through catalog lookup tool and enforces positive quantities.
+    2. Re-prices items deterministically using catalog unit prices and bulk discount rules.
+    3. Updates status to 'reviewed' (strictly distinguishing human-reviewed orders).
+    4. Records previous and new states in review_history with clear diff.
+    5. Persists changes to SQLite while preserving original created_at.
     """
+    from src.catalog import lookup_catalog_tool
+
     current_order = get_order(order_ref, db_path=db_path)
     if not current_order:
         raise ValueError(f"Order {order_ref} not found")
@@ -377,10 +380,15 @@ def apply_manual_correction(
     catalog_evidence = []
     for item in corrected_items:
         sku = item["sku"].strip().upper()
-        cat_item = get_catalog_item(sku)
-        if not cat_item:
-            raise ValueError(f"Cannot apply correction: SKU '{sku}' not in catalog")
+        lookup_res = lookup_catalog_tool(sku)
+        if not lookup_res["matched"]:
+            raise ValueError(f"Validation failed during review: SKU '{sku}' not found in catalog.")
+        
         quantity = int(item["quantity"])
+        if quantity <= 0:
+            raise ValueError(f"Validation failed during review: Quantity must be positive, got {quantity}.")
+
+        cat_item = get_catalog_item(lookup_res["sku"])
         prepared_lines.append(
             {
                 "sku": cat_item.sku,
@@ -389,16 +397,7 @@ def apply_manual_correction(
                 "quantity": quantity,
             }
         )
-        catalog_evidence.append(
-            {
-                "query": sku,
-                "sku": cat_item.sku,
-                "name": cat_item.name,
-                "unit_cents": cat_item.unit_cents,
-                "match_rule": "manual_review",
-                "evidence": f"Operator confirmed catalog item {cat_item.sku} ({cat_item.name}, ${cat_item.unit_cents / 100:.2f})",
-            }
-        )
+        catalog_evidence.append(lookup_res)
 
     pricing_result = calculate_order_pricing(prepared_lines)
 
@@ -414,7 +413,7 @@ def apply_manual_correction(
         "request_id": current_order["request_id"],
         "order_ref": current_order["order_ref"],
         "raw_text": current_order["raw_text"],
-        "status": "reviewed",  # Strictly distinguished from unreviewed 'draft'
+        "status": "reviewed",
         "line_items": pricing_result["line_items"],
         "gross_cents": pricing_result["gross_cents"],
         "discount_cents": pricing_result["discount_cents"],

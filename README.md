@@ -26,7 +26,6 @@ All domain specifications from [`tasks/orders/domain.md`](tasks/orders/domain.md
    - Unknown products, ambiguous quantities, or conflicting order revisions automatically generate customer-ready inquiry email drafts explaining the issue and offering catalog options.
 6. **Duplicate Prevention & Amendment Detection**:
    - Identical re-submissions (`order_ref` + identical text) are identified immediately as `duplicate`, safely recorded without creating new drafts or inflating order counts.
-   - Non-identical submissions with the same `order_ref` are recognized as conflicting amendments and flagged for manual review (`AMENDED_ORDER_REF_CONFLICT`).
 7. **Dynamic Multi-Line Reviewer Correction**:
    - In the Streamlit UI, reviewers can adjust, add, or remove multiple line items simultaneously, recalculate deterministic bulk pricing across all lines, and transition status to `reviewed`.
    - Audit trail is immutably preserved in `review_history`.
@@ -85,7 +84,7 @@ User Request Text
        │
        ▼
 ┌─────────────────────────────┐
-│  LLM (llama-3.3-70b /       │ ← tools=[CATALOG_LOOKUP_TOOL]
+│  LLM (openai/gpt-oss-120b /       │ ← tools=[CATALOG_LOOKUP_TOOL]
 │   gpt-4o-mini)              │
 └──────────┬──────────────────┘
            │ finish_reason="tool_calls"

@@ -425,16 +425,28 @@ with tab_queue:
             elif status == "failed":
                 st.error(f"❌ **Extraction Error**: {notes} (Exception Code: `{exception_code}`)")
 
-            # Audit History
+            ## Audit History with Visible State Diff
             history = get_review_history(order_ref)
             if history:
-                with st.expander(f"📜 Audit Trail / Review History ({len(history)} events)"):
+                with st.expander(f"📜 Audit Trail / Review History ({len(history)} events)", expanded=False):
                     for entry in history:
                         st.markdown(
-                            f"**{entry['created_at']}** — *{entry['reviewer']}* performed `{entry['action']}`: {entry['comment']}"
+                            f"**{entry['created_at']}** — *{entry['reviewer']}* performed `{entry['action']}`: *{entry['comment']}*"
                         )
-
-            st.markdown("<hr style='margin: 1.5rem 0;'>", unsafe_allow_html=True)
+                        # Render Before vs After Diff
+                        try:
+                            prev_st = json.loads(entry.get("previous_state") or "{}")
+                            new_st = json.loads(entry.get("new_state") or "{}")
+                            if prev_st or new_st:
+                                d_col1, d_col2 = st.columns(2)
+                                with d_col1:
+                                    st.caption("🔴 **Previous State:**")
+                                    st.json(prev_st)
+                                with d_col2:
+                                    st.caption("🟢 **New State (Applied):**")
+                                    st.json(new_st)
+                        except Exception:
+                            pass
 
 
 with tab_analytics:
@@ -494,14 +506,12 @@ with tab_analytics:
             st.subheader("💡 Actionable Business Process Improvement")
             st.info(
                 f"""
-                **Evidence from Live Intake Data:**
-                - **{box_pack} exceptions ({box_pack/total_records*100:.0f}% of total volume)** are caused by informal container terms (*"box"*, *"pack"*, *"crate"*).
-                - **{unknown_prod} exceptions** stem from unlisted products.
-                - **{ambiguous_prod} exceptions** stem from omitted cable length specifications.
-                - **{duplicates_count} duplicate submissions** were safely identified and isolated without inflating draft order totals.
+                **Evidence from Live Email Intake Data:**
+                - **{box_pack} exceptions ({box_pack/total_records*100:.0f}% of volume)** stem from customer container jargon (*"boxes"*, *"packs"*).
+                - **{unknown_prod} exceptions** stem from unlisted items or vague descriptions.
 
-                **Supported Operational Improvement:**
-                1. **Structured Unit-Count Intake**: Introducing a numeric piece-count constraint on customer portals directly resolves **100% of container ambiguity exceptions ({box_pack} orders)**.
-                2. **Length Variant Dropdowns**: Enforcing length selection for cable entries directly eliminates all ambiguous description exceptions.
+                **Practical Process Improvement (Email Workflow):**
+                1. **Automated Instant Clarification Macro:** For container exceptions, instantly auto-respond with a one-click confirmation email providing standard pack counts (e.g., *"Did you mean 10 individual cables?"*).
+                2. **Customer Packaging Translation Alias Table:** Establish account-level alias mappings in the database (e.g., Client Acme: 1 box = 10 units of CAB-1) to turn ambiguous emails into 0-touch drafts automatically.
                 """
             )

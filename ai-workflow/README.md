@@ -72,7 +72,7 @@ When processing `R3`, the extractor produces:
   ],
   "confidence": 0.90,
   "is_cached": true,
-  "model": "llama-3.3-70b-versatile"
+  "model": "openai/gpt-oss-120b"
 }
 ```
 The deterministic engine then flags `O3` as `needs-clarification`, generates a customer email draft asking for exact unit quantities and cable lengths, and blocks premature draft creation.

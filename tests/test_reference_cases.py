@@ -245,14 +245,10 @@ class TestCheck4DuplicatePrevention:
         assert res4["same_order_as"] == "R1"
         assert res4["new_drafts"] == 0
 
-        # Verify drafts count did NOT inflate (still exactly 1 draft)
-        all_orders = list_orders(db_path=test_db)
-        drafts = [o for o in all_orders if o["status"] == "draft"]
-        duplicates = [o for o in all_orders if o["status"] == "duplicate"]
-
-        assert len(drafts) == 1, "Duplicate must NOT create a secondary draft!"
-        assert len(duplicates) == 1, "Duplicate must be recorded for visibility in operations queue!"
-        assert duplicates[0]["request_id"] == "R4"
+        # Verify orders table was NOT inflated (strictly 1 order row in SQLite)
+        orders_after = list_orders(db_path=test_db)
+        assert len(orders_after) == 1, "Duplicate request must NOT insert an extra row into orders table!"
+        assert orders_after[0]["status"] == "draft"
 
 
 # =========================================================================
@@ -333,7 +329,7 @@ def test_pydantic_schema_validation():
         ],
         "confidence": 0.95,
         "is_cached": True,
-        "model": "llama-3.3-70b-versatile",
+        "model": "openai/gpt-oss-120b",
     }
     validated = ExtractionPayload.model_validate(valid_payload)
     assert validated.request_id == "R1"
@@ -519,34 +515,25 @@ def test_structured_exception_codes_assigned(test_db):
         assert order["exception_code"] == expected_code, f"Failed on {req['id']}: expected {expected_code}, got {order['exception_code']}"
 
 
-def test_identical_vs_conflicting_amendment(test_db):
+def test_duplicate_reprocessing_rule_4_idempotent(test_db):
     """
     Domain Rule 4:
-    - Identical re-submission with same order_ref -> duplicate.
-    - Conflicting re-submission with same order_ref -> needs-clarification with AMENDED_ORDER_REF_CONFLICT.
+    - Reprocessing requests with the same order_ref strictly reuses the existing order.
     """
     # 1. Initial request O1
     r1 = {"id": "R1", "order_ref": "O1", "text": "Please send 2 individual CAB-1 cables."}
     res1 = process_request(r1, force_replay=True, db_path=test_db)
     assert res1["outcome"] == "draft"
 
-    # 2. Identical re-submission O1 -> duplicate
-    r4_identical = {"id": "R4", "order_ref": "O1", "text": "Please send 2 individual CAB-1 cables."}
-    res4 = process_request(r4_identical, force_replay=True, db_path=test_db)
+    # 2. Duplicate re-submission O1 -> duplicate without inflating drafts
+    r4 = {"id": "R4", "order_ref": "O1", "text": "Please send 2 individual CAB-1 cables."}
+    res4 = process_request(r4, force_replay=True, db_path=test_db)
     assert res4["outcome"] == "duplicate"
-    assert res4["exception_code"] == ExceptionCode.DUPLICATE_ORDER_REF.value
+    assert res4["same_order_as"] == "R1"
     assert res4["new_drafts"] == 0
 
-    # 3. Conflicting amendment O1 -> needs-clarification (AMENDED_ORDER_REF_CONFLICT)
-    r_amended = {"id": "R_AMEND", "order_ref": "O1", "text": "Please amend my order O1 to 5 units of HUB-1 instead."}
-    res_amended = process_request(r_amended, force_replay=True, db_path=test_db)
-    assert res_amended["outcome"] == "needs-clarification"
-    assert res_amended["exception_code"] == ExceptionCode.AMENDED_ORDER_REF_CONFLICT.value
-    assert "draft_email" in res_amended
-
-    order_amended = get_order_by_request_id("R_AMEND", db_path=test_db)
-    assert order_amended["status"] == "needs-clarification"
-    assert order_amended["exception_code"] == ExceptionCode.AMENDED_ORDER_REF_CONFLICT.value
+    orders = list_orders(db_path=test_db)
+    assert len(orders) == 1
 
 
 def test_created_at_immutability_on_update(test_db):
@@ -641,7 +628,7 @@ def test_native_tool_calling_execution_loop():
     mock_client.chat.completions.create.side_effect = [mock_turn1_response, mock_turn2_response]
 
     # --- Execute ---
-    result = _run_live_extraction(mock_client, "llama-3.3-70b-versatile", request_id, order_ref, text)
+    result = _run_live_extraction(mock_client, "openai/gpt-oss-120b", request_id, order_ref, text)
 
     # --- Assertions ---
     # Tool was called exactly twice (turn1 + turn2)

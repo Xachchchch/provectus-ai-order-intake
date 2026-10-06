@@ -126,80 +126,19 @@ def process_request(
             "message": f"Request {request_id} already processed with status '{existing_by_req_id['status']}'.",
         }
 
-    # 1. Duplicate & Amendment Reprocessing Check across ALL prior requests under this order_ref
-    from src.storage import get_orders_by_order_ref
-    prior_orders = get_orders_by_order_ref(order_ref, db_path=db_path)
-    prior_orders_other = [o for o in prior_orders if o["request_id"] != request_id]
-
-    if prior_orders_other:
-        # Check if text is identical to ANY prior request under this order_ref
-        matching_identical = next(
-            (o for o in prior_orders_other if text.strip() == o["raw_text"].strip()),
-            None
-        )
-
-        if matching_identical:
-            # It is an exact duplicate of one of the prior submissions!
-            duplicate_data = {
-                "request_id": request_id,
-                "order_ref": order_ref,
-                "raw_text": text,
-                "status": "duplicate",
-                "line_items": [],
-                "gross_cents": 0,
-                "discount_cents": 0,
-                "total_cents": 0,
-                "notes": f"Duplicate request for order_ref '{order_ref}'; identical to '{matching_identical['request_id']}'.",
-                "is_cached": True,
-                "model": "rule_based_dedup",
-                "catalog_evidence": [],
-                "exception_code": ExceptionCode.DUPLICATE_ORDER_REF.value,
-            }
-            save_order(duplicate_data, db_path=db_path)
-            return {
-                "id": request_id,
-                "order_ref": order_ref,
-                "outcome": "duplicate",
-                "same_order_as": matching_identical["request_id"],
-                "new_drafts": 0,
-                "exception_code": ExceptionCode.DUPLICATE_ORDER_REF.value,
-                "message": f"Duplicate request for order_ref '{order_ref}'; identical to '{matching_identical['request_id']}'.",
-            }
-        else:
-            # Text differs from ALL prior submissions -> True Conflicting Amendment
-            conflict_issue = {
-                "reason": "Amended order request conflicting with existing submission under identical order_ref",
-                "product": "conflicting_amendment",
-                "quantity": None,
-            }
-            draft_info = generate_clarification_email(request_id, order_ref, [conflict_issue])
-            save_clarification_draft(draft_info, db_path=db_path)
-
-            conflict_order_data = {
-                "request_id": request_id,
-                "order_ref": order_ref,
-                "raw_text": text,
-                "status": "needs-clarification",
-                "line_items": [],
-                "gross_cents": 0,
-                "discount_cents": 0,
-                "total_cents": 0,
-                "notes": f"Customer submitted an amended request with conflicting details under existing order_ref '{order_ref}'. Manual review required.",
-                "is_cached": True,
-                "model": "rule_based_amendment",
-                "catalog_evidence": [],
-                "exception_code": ExceptionCode.AMENDED_ORDER_REF_CONFLICT.value,
-            }
-            save_order(conflict_order_data, db_path=db_path)
-            return {
-                "id": request_id,
-                "order_ref": order_ref,
-                "outcome": "needs-clarification",
-                "reason": "Amended order request conflicting with existing submission",
-                "draft_email": draft_info["draft_email"],
-                "exception_code": ExceptionCode.AMENDED_ORDER_REF_CONFLICT.value,
-                "new_drafts": 0,
-            }
+    # 1. Deduplication Check (Domain Rule 4: Same order_ref describes the same order)
+    # Reprocessing an existing order_ref strictly reuses the draft without creating a new order row
+    existing_order = get_order(order_ref, db_path=db_path)
+    if existing_order and existing_order["request_id"] != request_id:
+        return {
+            "id": request_id,
+            "order_ref": order_ref,
+            "outcome": "duplicate",
+            "same_order_as": existing_order["request_id"],
+            "new_drafts": 0,
+            "exception_code": ExceptionCode.DUPLICATE_ORDER_REF.value,
+            "message": f"Request {request_id} shares order_ref '{order_ref}' with '{existing_order['request_id']}'. Reused existing order without creating a new draft.",
+        }
 
     # 2. Information Extraction
     try:
@@ -238,7 +177,7 @@ def process_request(
         }
 
     is_cached = extracted.get("is_cached", True)
-    model_name = extracted.get("model", "llama-3.3-70b-versatile")
+    model_name = extracted.get("model", "openai/gpt-oss-120b")
 
     if extracted.get("status") == "failed":
         err_msg = extracted.get("error_message", "Unknown extraction failure")
