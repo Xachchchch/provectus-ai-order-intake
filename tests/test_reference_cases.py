@@ -565,3 +565,103 @@ def test_created_at_immutability_on_update(test_db):
     assert order2["updated_at"] >= original_created_at
 
 
+# =========================================================================
+# NATIVE TOOL-CALLING EXECUTION LOOP (unit test with mock)
+# =========================================================================
+def test_native_tool_calling_execution_loop():
+    """
+    Verifies that _run_live_extraction correctly executes the multi-turn agentic loop:
+      Turn 1: LLM returns tool_calls for lookup_catalog("USB hub")
+      Turn 2: LLM receives tool result and returns final JSON extraction
+
+    Asserts:
+      - lookup_catalog_tool was invoked with the correct query
+      - tool_calls_log in the payload records the tool call and result
+      - Final ExtractionPayload is valid with extracted_sku="HUB-1"
+    """
+    import json
+    import unittest.mock as mock
+    from src.extractor import _run_live_extraction, ExtractionPayload
+
+    request_id = "R_TOOL_TEST"
+    order_ref = "O_TOOL"
+    text = "Please send 3 USB hubs."
+
+    # --- Build mock response objects ---
+    # Turn 1: model emits a tool call for lookup_catalog
+    mock_tool_call = mock.MagicMock()
+    mock_tool_call.id = "call_abc123"
+    mock_tool_call.function.name = "lookup_catalog"
+    mock_tool_call.function.arguments = json.dumps({"query": "USB hub"})
+
+    mock_turn1_msg = mock.MagicMock()
+    mock_turn1_msg.tool_calls = [mock_tool_call]
+    mock_turn1_msg.content = None
+    mock_turn1_msg.model_dump.return_value = {
+        "role": "assistant",
+        "tool_calls": [{"id": "call_abc123", "function": {"name": "lookup_catalog", "arguments": '{"query": "USB hub"}'}}],
+    }
+
+    mock_turn1_choice = mock.MagicMock()
+    mock_turn1_choice.message = mock_turn1_msg
+
+    mock_turn1_response = mock.MagicMock()
+    mock_turn1_response.choices = [mock_turn1_choice]
+
+    # Turn 2: model returns the final JSON extraction (no more tool_calls)
+    final_json_payload = {
+        "request_id": request_id,
+        "order_ref": order_ref,
+        "raw_text": text,
+        "items": [
+            {
+                "raw_product_text": "USB hubs",
+                "raw_quantity_text": "3",
+                "extracted_sku": "HUB-1",
+                "extracted_quantity": 3,
+                "is_quantity_ambiguous": False,
+                "ambiguity_reason": None,
+            }
+        ],
+        "confidence": 0.95,
+    }
+
+    mock_turn2_msg = mock.MagicMock()
+    mock_turn2_msg.tool_calls = None
+    mock_turn2_msg.content = json.dumps(final_json_payload)
+
+    mock_turn2_choice = mock.MagicMock()
+    mock_turn2_choice.message = mock_turn2_msg
+
+    mock_turn2_response = mock.MagicMock()
+    mock_turn2_response.choices = [mock_turn2_choice]
+
+    # Wire up the mock client to return turn1 then turn2
+    mock_client = mock.MagicMock()
+    mock_client.chat.completions.create.side_effect = [mock_turn1_response, mock_turn2_response]
+
+    # --- Execute ---
+    result = _run_live_extraction(mock_client, "llama-3.3-70b-versatile", request_id, order_ref, text)
+
+    # --- Assertions ---
+    # Tool was called exactly twice (turn1 + turn2)
+    assert mock_client.chat.completions.create.call_count == 2, (
+        "Expected exactly 2 LLM calls (tool turn + final answer turn)"
+    )
+
+    # tool_calls_log must record the lookup_catalog invocation
+    assert "tool_calls_log" in result, "tool_calls_log missing from payload"
+    assert len(result["tool_calls_log"]) == 1, "Expected exactly 1 tool call logged"
+    tool_log_entry = result["tool_calls_log"][0]
+    assert tool_log_entry["function"] == "lookup_catalog"
+    assert tool_log_entry["arguments"]["query"] == "USB hub"
+    assert tool_log_entry["result"]["matched"] is True
+    assert tool_log_entry["result"]["sku"] == "HUB-1"
+
+    # Final payload must validate through Pydantic and contain HUB-1
+    payload = ExtractionPayload.model_validate(result)
+    assert len(payload.items) == 1
+    item = payload.items[0]
+    assert item.extracted_sku == "HUB-1"
+    assert item.extracted_quantity == 3
+    assert item.is_quantity_ambiguous is False

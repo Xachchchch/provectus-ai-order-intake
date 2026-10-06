@@ -62,7 +62,7 @@ client-ai-starter-pack/
 │   ├── seed.json                  # Seed data
 │   └── expected-seed-results.json # Initial seed expectations
 ├── tests/
-│   └── test_reference_cases.py    # Pytest suite verifying all checks (20/20 passing)
+│   └── test_reference_cases.py    # Pytest suite verifying all checks (21/21 passing)
 ├── ai-workflow/
 │   ├── manifest.json              # AI workflow configuration manifest
 │   ├── README.md                  # Workflow, prompt engineering & failure correction case

@@ -43,9 +43,12 @@
       "notes": "System prompt enforcing strict unit quantities, forbidding packaging inference (box, pack), and returning structured JSON."
     },
     "tool_and_mcp_settings": {
-      "status": "not-used",
-      "files": [],
-      "notes": "Default toolset used."
+      "status": "used",
+      "files": [
+        "src/extractor.py",
+        "src/catalog.py"
+      ],
+      "notes": "Native OpenAI/Groq Tool Calling schema CATALOG_LOOKUP_TOOL integrated into _run_live_extraction. LLM calls lookup_catalog natively; local lookup_catalog_tool executes it; result fed back as tool role message before final JSON extraction."
     },
     "permissions_and_environment_names": {
       "status": "used",
@@ -79,6 +82,17 @@
       "redactions": [
         "API keys redacted in repository"
       ]
+    },
+    {
+      "name": "CATALOG_LOOKUP_TOOL",
+      "category": "tool_and_mcp_settings",
+      "purpose": "Native OpenAI/Groq function schema enabling the LLM to call the local product catalog lookup tool during extraction. The model emits tool_calls with query arguments; _run_live_extraction executes lookup_catalog_tool locally and feeds results back as tool role messages before the final JSON is produced.",
+      "original_path_or_scope": "src/extractor.py",
+      "saved_path": "src/extractor.py",
+      "version_or_commit": "HEAD",
+      "used_during": "Live LLM extraction with native function calling",
+      "status": "active",
+      "redactions": []
     }
   ],
   "replay_command": "pytest tests/test_reference_cases.py -v",

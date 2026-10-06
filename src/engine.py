@@ -375,15 +375,22 @@ def process_request(
         flagged_qty = issues[0].get("quantity")
         final_code = assigned_exception_code.value if assigned_exception_code else ExceptionCode.UNKNOWN_CATALOG_PRODUCT.value
 
+        # Preserve any already-resolved valid line items so the reviewer does not have to
+        # re-enter them manually. Orders where ALL items have issues keep an empty list.
+        preserved_lines = valid_line_items if valid_line_items else []
+        preserved_pricing = calculate_order_pricing(preserved_lines) if preserved_lines else {
+            "line_items": [], "gross_cents": 0, "discount_cents": 0, "total_cents": 0
+        }
+
         order_data = {
             "request_id": request_id,
             "order_ref": order_ref,
             "raw_text": text,
             "status": "needs-clarification",
-            "line_items": [],
-            "gross_cents": 0,
-            "discount_cents": 0,
-            "total_cents": 0,
+            "line_items": preserved_pricing["line_items"],
+            "gross_cents": preserved_pricing["gross_cents"],
+            "discount_cents": preserved_pricing["discount_cents"],
+            "total_cents": preserved_pricing["total_cents"],
             "notes": f"Flagged: {combined_reason}",
             "is_cached": is_cached,
             "model": model_name,
