@@ -1,0 +1,5 @@
+Order-Ref: O5
+Request-ID: R5
+Subject: Purchase Request for O5
+
+Order 10 units of USB-C cable 1 m.

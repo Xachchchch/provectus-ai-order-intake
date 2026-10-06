@@ -1,0 +1,5 @@
+Order-Ref: O8
+Request-ID: R8
+Subject: Purchase Request for O8
+
+We require 5 USB-C cables urgently.

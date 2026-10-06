@@ -19,7 +19,7 @@ def get_db_connection(db_path: str = DEFAULT_DB_PATH) -> sqlite3.Connection:
 
 
 def init_db(db_path: str = DEFAULT_DB_PATH) -> None:
-    """Initialize SQLite database tables if they do not exist."""
+    """Initialize SQLite database tables and apply backward-compatible schema migrations."""
     conn = get_db_connection(db_path)
     try:
         with conn:
@@ -37,11 +37,22 @@ def init_db(db_path: str = DEFAULT_DB_PATH) -> None:
                     notes TEXT,
                     is_cached INTEGER DEFAULT 1,
                     model TEXT DEFAULT 'llama-3.3-70b-versatile',
+                    catalog_evidence_json TEXT DEFAULT '[]',
+                    exception_code TEXT DEFAULT '',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
                 """
             )
+            # Schema migration checks if existing DB lacks new columns
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA table_info(orders)")
+            cols = [row["name"] for row in cursor.fetchall()]
+            if "catalog_evidence_json" not in cols:
+                conn.execute("ALTER TABLE orders ADD COLUMN catalog_evidence_json TEXT DEFAULT '[]'")
+            if "exception_code" not in cols:
+                conn.execute("ALTER TABLE orders ADD COLUMN exception_code TEXT DEFAULT ''")
+
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_orders_order_ref ON orders (order_ref)"
             )
@@ -76,11 +87,37 @@ def init_db(db_path: str = DEFAULT_DB_PATH) -> None:
         conn.close()
 
 
+def _deserialize_order_row(r: sqlite3.Row) -> Dict[str, Any]:
+    """Helper to convert sqlite row to rich order dict with deserialized JSON."""
+    d = dict(r)
+    d["line_items"] = json.loads(d.get("line_items_json") or "[]")
+    d["is_cached"] = bool(d.get("is_cached", 1))
+    try:
+        d["catalog_evidence"] = json.loads(d.get("catalog_evidence_json") or "[]")
+    except Exception:
+        d["catalog_evidence"] = []
+    d["exception_code"] = d.get("exception_code") or ""
+    return d
+
+
 def save_order(order_data: Dict[str, Any], db_path: str = DEFAULT_DB_PATH) -> None:
-    """Insert or update order in SQLite database keyed by request_id."""
+    """
+    Insert or update order in SQLite database keyed by request_id.
+    Guarantees immutability of created_at on conflict / update.
+    """
     init_db(db_path)
     now = datetime.now(timezone.utc).isoformat()
     conn = get_db_connection(db_path)
+
+    # Serialize catalog evidence
+    catalog_evidence = order_data.get("catalog_evidence", [])
+    if isinstance(catalog_evidence, (list, dict)):
+        catalog_evidence_json = json.dumps(catalog_evidence)
+    else:
+        catalog_evidence_json = str(catalog_evidence)
+
+    exception_code = order_data.get("exception_code", "")
+
     try:
         with conn:
             conn.execute(
@@ -88,9 +125,10 @@ def save_order(order_data: Dict[str, Any], db_path: str = DEFAULT_DB_PATH) -> No
                 INSERT INTO orders (
                     request_id, order_ref, raw_text, status,
                     line_items_json, gross_cents, discount_cents, total_cents,
-                    notes, is_cached, model, created_at, updated_at
+                    notes, is_cached, model, catalog_evidence_json, exception_code,
+                    created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(request_id) DO UPDATE SET
                     order_ref=excluded.order_ref,
                     raw_text=excluded.raw_text,
@@ -102,6 +140,8 @@ def save_order(order_data: Dict[str, Any], db_path: str = DEFAULT_DB_PATH) -> No
                     notes=excluded.notes,
                     is_cached=excluded.is_cached,
                     model=excluded.model,
+                    catalog_evidence_json=excluded.catalog_evidence_json,
+                    exception_code=excluded.exception_code,
                     updated_at=excluded.updated_at
                 """,
                 (
@@ -116,6 +156,8 @@ def save_order(order_data: Dict[str, Any], db_path: str = DEFAULT_DB_PATH) -> No
                     order_data.get("notes", ""),
                     1 if order_data.get("is_cached", True) else 0,
                     order_data.get("model", "llama-3.3-70b-versatile"),
+                    catalog_evidence_json,
+                    exception_code,
                     order_data.get("created_at", now),
                     now,
                 ),
@@ -148,10 +190,7 @@ def get_order(order_ref: str, db_path: str = DEFAULT_DB_PATH) -> Optional[Dict[s
             row = cursor.fetchone()
         if not row:
             return None
-        d = dict(row)
-        d["line_items"] = json.loads(d["line_items_json"])
-        d["is_cached"] = bool(d.get("is_cached", 1))
-        return d
+        return _deserialize_order_row(row)
     finally:
         conn.close()
 
@@ -166,10 +205,7 @@ def get_order_by_request_id(request_id: str, db_path: str = DEFAULT_DB_PATH) -> 
         row = cursor.fetchone()
         if not row:
             return None
-        d = dict(row)
-        d["line_items"] = json.loads(d["line_items_json"])
-        d["is_cached"] = bool(d.get("is_cached", 1))
-        return d
+        return _deserialize_order_row(row)
     finally:
         conn.close()
 
@@ -180,20 +216,39 @@ def list_orders(status_filter: Optional[str] = None, db_path: str = DEFAULT_DB_P
     conn = get_db_connection(db_path)
     try:
         cursor = conn.cursor()
-        if status_filter and status_filter != "all" and status_filter != "All":
+        if status_filter and status_filter.lower() != "all":
             cursor.execute("SELECT * FROM orders WHERE status = ? ORDER BY created_at ASC", (status_filter,))
         else:
             cursor.execute("SELECT * FROM orders ORDER BY created_at ASC")
         rows = cursor.fetchall()
-        orders = []
-        for r in rows:
-            d = dict(r)
-            d["line_items"] = json.loads(d["line_items_json"])
-            d["is_cached"] = bool(d.get("is_cached", 1))
-            orders.append(d)
-        return orders
+        return [_deserialize_order_row(r) for r in rows]
     finally:
         conn.close()
+
+
+def get_orders_metrics(db_path: str = DEFAULT_DB_PATH) -> Dict[str, int]:
+    """
+    Computes order counts distinguishing net valid orders from blocked duplicates.
+    Total Orders Ingested = count of orders where status != 'duplicate'.
+    Duplicate Submissions Blocked = count of orders where status == 'duplicate'.
+    """
+    orders = list_orders(db_path=db_path)
+    total_raw = len(orders)
+    net_valid = sum(1 for o in orders if o["status"] != "duplicate")
+    duplicates = sum(1 for o in orders if o["status"] == "duplicate")
+    drafts = sum(1 for o in orders if o["status"] == "draft")
+    reviewed = sum(1 for o in orders if o["status"] == "reviewed")
+    clarifications = sum(1 for o in orders if o["status"] == "needs-clarification")
+    failed = sum(1 for o in orders if o["status"] == "failed")
+    return {
+        "total_raw": total_raw,
+        "net_valid": net_valid,
+        "duplicates": duplicates,
+        "drafts": drafts,
+        "reviewed": reviewed,
+        "clarifications": clarifications,
+        "failed": failed,
+    }
 
 
 def save_clarification_draft(draft: Dict[str, Any], db_path: str = DEFAULT_DB_PATH) -> int:
@@ -296,16 +351,17 @@ def apply_manual_correction(
 ) -> Dict[str, Any]:
     """
     Applies a reviewer manual correction to an existing order:
-    1. Re-prices items deterministically using catalog unit prices and bulk discount rules.
+    1. Re-prices items deterministically using catalog unit prices and bulk discount rules across all lines.
     2. Updates status to 'reviewed' (strictly distinguishing a human-reviewed order from an unreviewed draft).
     3. Records the event in review_history with previous and new states.
-    4. Persists changes to SQLite.
+    4. Persists changes to SQLite while preserving original created_at.
     """
     current_order = get_order(order_ref, db_path=db_path)
     if not current_order:
         raise ValueError(f"Order {order_ref} not found")
 
     prepared_lines = []
+    catalog_evidence = []
     for item in corrected_items:
         sku = item["sku"].strip().upper()
         cat_item = get_catalog_item(sku)
@@ -318,6 +374,16 @@ def apply_manual_correction(
                 "name": cat_item.name,
                 "unit_cents": cat_item.unit_cents,
                 "quantity": quantity,
+            }
+        )
+        catalog_evidence.append(
+            {
+                "query": sku,
+                "sku": cat_item.sku,
+                "name": cat_item.name,
+                "unit_cents": cat_item.unit_cents,
+                "match_rule": "manual_review",
+                "evidence": f"Operator confirmed catalog item {cat_item.sku} ({cat_item.name}, ${cat_item.unit_cents / 100:.2f})",
             }
         )
 
@@ -343,6 +409,8 @@ def apply_manual_correction(
         "notes": f"Reviewed & corrected by {reviewer}: {comment}",
         "is_cached": current_order.get("is_cached", True),
         "model": current_order.get("model", "llama-3.3-70b-versatile"),
+        "catalog_evidence": catalog_evidence,
+        "exception_code": "CLEAN_DRAFT",
         "created_at": current_order["created_at"],
     }
 
@@ -350,9 +418,9 @@ def apply_manual_correction(
 
     new_state = json.dumps(
         {
-            "status": new_order_data["status"],
-            "line_items": new_order_data["line_items"],
-            "total_cents": new_order_data["total_cents"],
+            "status": "reviewed",
+            "line_items": pricing_result["line_items"],
+            "total_cents": pricing_result["total_cents"],
         }
     )
 

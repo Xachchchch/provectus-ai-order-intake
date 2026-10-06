@@ -1,9 +1,10 @@
 """Core processing engine for AI Order Intake & Exception Handling."""
 
-from typing import Any, Dict, List, Optional
+from enum import Enum
 import os
+from typing import Any, Dict, List, Optional
 
-from src.catalog import CATALOG, MatchStatus, get_catalog_item, match_catalog_item
+from src.catalog import CATALOG, MatchStatus, get_catalog_item, lookup_catalog_tool, match_catalog_item
 from src.extractor import extract_order_information
 from src.pricing import calculate_order_pricing
 from src.storage import (
@@ -16,6 +17,17 @@ from src.storage import (
     save_clarification_draft,
     save_order,
 )
+
+
+class ExceptionCode(str, Enum):
+    """Structured, queryable exception codes for database persistence and analytics."""
+    CLEAN_DRAFT = "CLEAN_DRAFT"
+    AMBIGUOUS_CONTAINER_QUANTITY = "AMBIGUOUS_CONTAINER_QUANTITY"
+    UNKNOWN_CATALOG_PRODUCT = "UNKNOWN_CATALOG_PRODUCT"
+    AMBIGUOUS_PRODUCT_DESCRIPTION = "AMBIGUOUS_PRODUCT_DESCRIPTION"
+    DUPLICATE_ORDER_REF = "DUPLICATE_ORDER_REF"
+    AMENDED_ORDER_REF_CONFLICT = "AMENDED_ORDER_REF_CONFLICT"
+    EXTRACTION_FAILED = "EXTRACTION_FAILED"
 
 
 def generate_clarification_email(
@@ -32,7 +44,12 @@ def generate_clarification_email(
         product = issue.get("product", "item")
         qty = issue.get("quantity")
 
-        if "unknown product" in reason.lower():
+        if "amended" in reason.lower() or "conflict" in reason.lower():
+            bullet_points.append(
+                f"- Order Revision Conflict: An earlier submission exists for Order Ref #{order_ref}. "
+                f"Your latest message contains modified details. Please confirm the authoritative item list and quantities."
+            )
+        elif "unknown product" in reason.lower():
             bullet_points.append(
                 f"- Unknown product '{product}': Our catalog currently offers:\n"
                 f"    * CAB-1: USB-C cable 1 m ($20.00)\n"
@@ -40,7 +57,7 @@ def generate_clarification_email(
                 f"    * HUB-1: USB hub ($50.00)\n"
                 f"  Please confirm if you would like one of these items or a different specification."
             )
-        elif "box" in reason.lower() or "pack" in reason.lower() or "ambiguous quantity" in reason.lower():
+        elif "box" in reason.lower() or "pack" in reason.lower() or "ambiguous quantity" in reason.lower() or "container" in reason.lower():
             bullet_points.append(
                 f"- Ambiguous quantity '{qty}' for '{product}': As per company intake rules, we do not "
                 f"infer packaging or box counts. Please specify the exact positive whole number of individual units."
@@ -85,12 +102,15 @@ def process_request(
     force_replay: bool = True,
     db_path: str = DEFAULT_DB_PATH,
 ) -> Dict[str, Any]:
-    """Process a single order request through the end-to-end pipeline."""
+    """
+    Process a single order request through the end-to-end pipeline.
+    Maintains idempotency, duplicate blocking, amendment detection, and explicit catalog evidence.
+    """
     request_id = request["id"]
     order_ref = request["order_ref"]
     text = request["text"]
 
-    # 0. Idempotency Check: If this request_id was already processed, preserve its state
+    # 0. Idempotency Guard: If this request_id was already processed, preserve existing state
     existing_by_req_id = get_order_by_request_id(request_id, db_path=db_path)
     if existing_by_req_id:
         return {
@@ -100,34 +120,78 @@ def process_request(
             "current_status": existing_by_req_id["status"],
             "total_cents": existing_by_req_id["total_cents"],
             "new_drafts": 0,
+            "exception_code": existing_by_req_id.get("exception_code", ""),
+            "catalog_evidence": existing_by_req_id.get("catalog_evidence", []),
             "message": f"Request {request_id} already processed with status '{existing_by_req_id['status']}'.",
         }
 
-    # 1. Duplicate check: Reprocessing identical request must NOT create a new draft
+    # 1. Duplicate & Amendment Reprocessing Check
     existing_order = get_order(order_ref, db_path=db_path)
     if existing_order and existing_order["request_id"] != request_id:
-        duplicate_data = {
-            "request_id": request_id,
-            "order_ref": order_ref,
-            "raw_text": text,
-            "status": "duplicate",
-            "line_items": [],
-            "gross_cents": 0,
-            "discount_cents": 0,
-            "total_cents": 0,
-            "notes": f"Duplicate request for order_ref '{order_ref}'; original order is '{existing_order['request_id']}'.",
-            "is_cached": True,
-            "model": "rule_based_dedup",
-        }
-        save_order(duplicate_data, db_path=db_path)
-        return {
-            "id": request_id,
-            "order_ref": order_ref,
-            "outcome": "duplicate",
-            "same_order_as": existing_order["request_id"],
-            "new_drafts": 0,
-            "message": f"Duplicate request for order_ref '{order_ref}'; already processed as '{existing_order['request_id']}'.",
-        }
+        # Check if identical re-submission
+        is_identical = (text.strip() == existing_order["raw_text"].strip())
+
+        if is_identical:
+            duplicate_data = {
+                "request_id": request_id,
+                "order_ref": order_ref,
+                "raw_text": text,
+                "status": "duplicate",
+                "line_items": [],
+                "gross_cents": 0,
+                "discount_cents": 0,
+                "total_cents": 0,
+                "notes": f"Duplicate request for order_ref '{order_ref}'; identical to '{existing_order['request_id']}'.",
+                "is_cached": True,
+                "model": "rule_based_dedup",
+                "catalog_evidence": [],
+                "exception_code": ExceptionCode.DUPLICATE_ORDER_REF.value,
+            }
+            save_order(duplicate_data, db_path=db_path)
+            return {
+                "id": request_id,
+                "order_ref": order_ref,
+                "outcome": "duplicate",
+                "same_order_as": existing_order["request_id"],
+                "new_drafts": 0,
+                "exception_code": ExceptionCode.DUPLICATE_ORDER_REF.value,
+                "message": f"Duplicate request for order_ref '{order_ref}'; already processed as '{existing_order['request_id']}'.",
+            }
+        else:
+            # Conflicting amendment with same order_ref -> Route to needs-clarification
+            conflict_issue = {
+                "reason": "Amended order request conflicting with existing submission under identical order_ref",
+                "product": "conflicting_amendment",
+                "quantity": None,
+            }
+            draft_info = generate_clarification_email(request_id, order_ref, [conflict_issue])
+            save_clarification_draft(draft_info, db_path=db_path)
+
+            conflict_order_data = {
+                "request_id": request_id,
+                "order_ref": order_ref,
+                "raw_text": text,
+                "status": "needs-clarification",
+                "line_items": [],
+                "gross_cents": 0,
+                "discount_cents": 0,
+                "total_cents": 0,
+                "notes": f"Customer submitted an amended request with conflicting details under existing order_ref '{order_ref}'. Manual review required.",
+                "is_cached": True,
+                "model": "rule_based_amendment",
+                "catalog_evidence": [],
+                "exception_code": ExceptionCode.AMENDED_ORDER_REF_CONFLICT.value,
+            }
+            save_order(conflict_order_data, db_path=db_path)
+            return {
+                "id": request_id,
+                "order_ref": order_ref,
+                "outcome": "needs-clarification",
+                "reason": "Amended order request conflicting with existing submission",
+                "draft_email": draft_info["draft_email"],
+                "exception_code": ExceptionCode.AMENDED_ORDER_REF_CONFLICT.value,
+                "new_drafts": 0,
+            }
 
     # 2. Information Extraction
     extracted = extract_order_information(
@@ -154,6 +218,8 @@ def process_request(
             "notes": f"Extraction failed: {err_msg}",
             "is_cached": is_cached,
             "model": model_name,
+            "catalog_evidence": [],
+            "exception_code": ExceptionCode.EXTRACTION_FAILED.value,
         }
         save_order(order_data, db_path=db_path)
         return {
@@ -162,6 +228,7 @@ def process_request(
             "outcome": "failed",
             "reason": err_msg,
             "error": err_msg,
+            "exception_code": ExceptionCode.EXTRACTION_FAILED.value,
         }
 
     items = extracted.get("items", [])
@@ -181,6 +248,8 @@ def process_request(
             "notes": "No items extracted",
             "is_cached": is_cached,
             "model": model_name,
+            "catalog_evidence": [],
+            "exception_code": ExceptionCode.UNKNOWN_CATALOG_PRODUCT.value,
         }
         save_order(order_data, db_path=db_path)
         return {
@@ -191,12 +260,14 @@ def process_request(
             "draft_email": draft_info["draft_email"],
             "is_cached": is_cached,
             "model": model_name,
+            "exception_code": ExceptionCode.UNKNOWN_CATALOG_PRODUCT.value,
         }
 
-    # 3. Deterministic Catalog Matching & Quantity Validation
+    # 3. Deterministic Local Catalog Lookup & Quantity Validation
     issues = []
     valid_line_items = []
     catalog_evidence = []
+    assigned_exception_code: Optional[ExceptionCode] = None
 
     for item in items:
         raw_product = item.get("raw_product_text", "")
@@ -216,6 +287,8 @@ def process_request(
                 }
             )
             item_has_issue = True
+            if not assigned_exception_code:
+                assigned_exception_code = ExceptionCode.AMBIGUOUS_CONTAINER_QUANTITY
         elif qty is None or qty <= 0:
             issues.append(
                 {
@@ -225,24 +298,34 @@ def process_request(
                 }
             )
             item_has_issue = True
+            if not assigned_exception_code:
+                assigned_exception_code = ExceptionCode.AMBIGUOUS_CONTAINER_QUANTITY
 
-        catalog_item = None
-        if extracted_sku:
-            catalog_item = get_catalog_item(extracted_sku)
+        # Local Catalog Lookup Tool Call
+        # Prefer exact extracted_sku if available, otherwise search by raw_product
+        lookup_query = extracted_sku if extracted_sku else raw_product
+        lookup_result = lookup_catalog_tool(lookup_query)
+        if not lookup_result["matched"] and extracted_sku and raw_product != extracted_sku:
+            # Fallback query using raw_product
+            lookup_result = lookup_catalog_tool(raw_product)
 
-        if not catalog_item:
-            matched_item, status, msg = match_catalog_item(raw_product)
-            if status in (MatchStatus.EXACT_SKU, MatchStatus.EXACT_DESCRIPTION):
-                catalog_item = matched_item
-                catalog_evidence.append(f"Catalog match: '{raw_product}' -> SKU {matched_item.sku}")
-            elif status == MatchStatus.AMBIGUOUS:
-                issues.append({"reason": msg, "product": raw_product, "quantity": qty})
+        catalog_evidence.append(lookup_result)
+
+        if lookup_result["matched"]:
+            matched_sku = lookup_result["sku"]
+            catalog_item = get_catalog_item(matched_sku)
+        else:
+            catalog_item = None
+            if lookup_result["match_rule"] == "ambiguous_multi_match":
+                issues.append({"reason": lookup_result["evidence"], "product": raw_product, "quantity": qty})
                 item_has_issue = True
+                if not assigned_exception_code:
+                    assigned_exception_code = ExceptionCode.AMBIGUOUS_PRODUCT_DESCRIPTION
             else:
                 issues.append({"reason": "unknown product", "product": raw_product, "quantity": qty})
                 item_has_issue = True
-        else:
-            catalog_evidence.append(f"Direct SKU match: {extracted_sku}")
+                if not assigned_exception_code:
+                    assigned_exception_code = ExceptionCode.UNKNOWN_CATALOG_PRODUCT
 
         if not item_has_issue and catalog_item and qty and qty > 0:
             valid_line_items.append(
@@ -262,6 +345,7 @@ def process_request(
         combined_reason = "; ".join(iss["reason"] for iss in issues)
         flagged_product = issues[0]["product"]
         flagged_qty = issues[0].get("quantity")
+        final_code = assigned_exception_code.value if assigned_exception_code else ExceptionCode.UNKNOWN_CATALOG_PRODUCT.value
 
         order_data = {
             "request_id": request_id,
@@ -275,6 +359,8 @@ def process_request(
             "notes": f"Flagged: {combined_reason}",
             "is_cached": is_cached,
             "model": model_name,
+            "catalog_evidence": catalog_evidence,
+            "exception_code": final_code,
         }
         save_order(order_data, db_path=db_path)
 
@@ -287,6 +373,8 @@ def process_request(
             "draft_email": draft_info["draft_email"],
             "is_cached": is_cached,
             "model": model_name,
+            "catalog_evidence": catalog_evidence,
+            "exception_code": final_code,
         }
         if flagged_qty:
             res["flagged_quantity"] = flagged_qty
@@ -307,6 +395,8 @@ def process_request(
         "notes": "Automated draft ready for fulfillment",
         "is_cached": is_cached,
         "model": model_name,
+        "catalog_evidence": catalog_evidence,
+        "exception_code": ExceptionCode.CLEAN_DRAFT.value,
     }
     save_order(order_data, db_path=db_path)
 
@@ -320,6 +410,8 @@ def process_request(
         "total_cents": pricing["total_cents"],
         "is_cached": is_cached,
         "model": model_name,
+        "catalog_evidence": catalog_evidence,
+        "exception_code": ExceptionCode.CLEAN_DRAFT.value,
     }
     if len(pricing["line_items"]) == 1:
         res["sku"] = pricing["line_items"][0]["sku"]
@@ -348,7 +440,7 @@ def apply_reviewer_correction(
     comment: str = "Manual reviewer correction",
     db_path: str = DEFAULT_DB_PATH,
 ) -> Dict[str, Any]:
-    """Applies a human reviewer correction, reruns deterministic pricing, and sets status to 'reviewed'."""
+    """Applies a human reviewer correction across all line items, reruns pricing, sets status to 'reviewed'."""
     return apply_manual_correction(
         order_ref=order_ref,
         corrected_items=corrected_items,

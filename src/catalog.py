@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 class MatchStatus(Enum):
@@ -128,3 +128,130 @@ def match_catalog_item(text: str) -> Tuple[Optional[CatalogItem], MatchStatus, s
 
     # 4. Unknown product
     return None, MatchStatus.UNKNOWN, f"Unknown product: '{raw}'"
+
+
+def lookup_catalog_tool(query: str) -> Dict[str, Any]:
+    """
+    Dedicated local catalog lookup tool that strictly searches the catalog.
+    Records the source query, matching rule, and catalog entry details supporting the proposal.
+
+    Rule categories:
+        - 'exact_sku'
+        - 'unambiguous_alias'
+        - 'ambiguous_multi_match'
+        - 'unknown_product'
+    """
+    if not query or not query.strip():
+        return {
+            "query": query,
+            "matched": False,
+            "sku": None,
+            "name": None,
+            "unit_cents": None,
+            "match_rule": "unknown_product",
+            "evidence": "No product query provided",
+        }
+
+    raw = query.strip()
+    norm = normalize_text(raw)
+
+    # 1. Exact SKU check
+    for sku, item in CATALOG.items():
+        if raw.upper() == sku or norm == normalize_text(sku):
+            return {
+                "query": query,
+                "matched": True,
+                "sku": item.sku,
+                "name": item.name,
+                "unit_cents": item.unit_cents,
+                "match_rule": "exact_sku",
+                "evidence": f"Matched exact SKU {sku} ({item.name}, ${item.unit_cents / 100:.2f})",
+            }
+
+    # 2. Exact or Alias Description check
+    for sku, item in CATALOG.items():
+        if norm == normalize_text(item.name):
+            return {
+                "query": query,
+                "matched": True,
+                "sku": item.sku,
+                "name": item.name,
+                "unit_cents": item.unit_cents,
+                "match_rule": "unambiguous_alias",
+                "evidence": f"Matched catalog name '{item.name}' -> {sku} (${item.unit_cents / 100:.2f})",
+            }
+        for alias in item.aliases:
+            if norm == normalize_text(alias):
+                return {
+                    "query": query,
+                    "matched": True,
+                    "sku": item.sku,
+                    "name": item.name,
+                    "unit_cents": item.unit_cents,
+                    "match_rule": "unambiguous_alias",
+                    "evidence": f"Matched catalog alias '{alias}' -> {sku} (${item.unit_cents / 100:.2f})",
+                }
+
+    # 3. Check for ambiguous descriptions
+    ambiguous_keywords = [
+        "the usual cable",
+        "usual cable",
+        "usb c cable",
+        "usb-c cable",
+        "usb c cables",
+        "usb-c cables",
+        "cable",
+        "cables",
+    ]
+    if norm in [normalize_text(kw) for kw in ambiguous_keywords]:
+        matching_skus = ["CAB-1", "CAB-2"]
+        return {
+            "query": query,
+            "matched": False,
+            "sku": None,
+            "name": None,
+            "unit_cents": None,
+            "match_rule": "ambiguous_multi_match",
+            "evidence": f"Ambiguous product description: matches multiple catalog SKUs ({', '.join(matching_skus)})",
+        }
+
+    # Partial matches
+    matching_items = []
+    for sku, item in CATALOG.items():
+        if sku.lower() in norm or normalize_text(item.name) in norm:
+            matching_items.append(item)
+
+    if len(matching_items) == 1:
+        item = matching_items[0]
+        return {
+            "query": query,
+            "matched": True,
+            "sku": item.sku,
+            "name": item.name,
+            "unit_cents": item.unit_cents,
+            "match_rule": "unambiguous_alias",
+            "evidence": f"Matched unambiguous description '{item.name}' -> {item.sku} (${item.unit_cents / 100:.2f})",
+        }
+    elif len(matching_items) > 1:
+        skus = [it.sku for it in matching_items]
+        return {
+            "query": query,
+            "matched": False,
+            "sku": None,
+            "name": None,
+            "unit_cents": None,
+            "match_rule": "ambiguous_multi_match",
+            "evidence": f"Ambiguous product description: matches multiple items ({', '.join(skus)})",
+        }
+
+    # 4. Unknown product
+    return {
+        "query": query,
+        "matched": False,
+        "sku": None,
+        "name": None,
+        "unit_cents": None,
+        "match_rule": "unknown_product",
+        "evidence": f"Unknown product: '{raw}' (not found in catalog)",
+    }
+

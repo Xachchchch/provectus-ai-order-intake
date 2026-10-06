@@ -1,0 +1,5 @@
+Order-Ref: O10
+Request-ID: R10
+Subject: Purchase Request for O10
+
+Please send 15 Solar connectors.

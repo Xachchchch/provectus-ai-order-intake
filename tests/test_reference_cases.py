@@ -22,17 +22,20 @@ if WORKSPACE_ROOT not in sys.path:
 import pytest
 from pydantic import ValidationError
 
-from src.catalog import CATALOG, MatchStatus, get_catalog_item, match_catalog_item
-from src.engine import apply_reviewer_correction, process_request
+from src.catalog import CATALOG, MatchStatus, get_catalog_item, lookup_catalog_tool, match_catalog_item
+from src.engine import ExceptionCode, apply_reviewer_correction, process_request
 from src.extractor import ExtractedOrderItem, ExtractionPayload
+from src.ingestion import load_email_requests_from_dir, parse_email_file
 from src.pricing import calculate_line_price, calculate_order_pricing
 from src.storage import (
     get_clarification_draft,
     get_order,
     get_order_by_request_id,
+    get_orders_metrics,
     get_review_history,
     init_db,
     list_orders,
+    save_order,
 )
 
 
@@ -416,4 +419,149 @@ def test_failed_extraction_path_emits_failed_status(test_db, monkeypatch):
     stored = get_order("O_ERR", db_path=test_db)
     assert stored["status"] == "failed"
     assert "Simulated upstream 500" in stored["notes"]
+
+
+# =========================================================================
+# SENIOR REFACTORING VERIFICATION: Email Ingestion, Evidence, Multi-Line, Codes
+# =========================================================================
+
+def test_load_email_requests_from_dir():
+    """Verifies that all 10 email files in data/emails/ are correctly parsed with headers and body."""
+    emails = load_email_requests_from_dir("data/emails")
+    assert len(emails) == 10, f"Expected 10 email requests, got {len(emails)}"
+
+    # Check first request R1
+    r1 = emails[0]
+    assert r1["id"] == "R1"
+    assert r1["order_ref"] == "O1"
+    assert "CAB-1" in r1["text"]
+    assert r1["source"] == "email_file"
+    assert r1["filename"] == "R1_O1.txt"
+
+    # Check R6 (multi-line request)
+    r6 = emails[5]
+    assert r6["id"] == "R6"
+    assert r6["order_ref"] == "O6"
+    assert "CAB-2" in r6["text"] and "HUB-1" in r6["text"]
+
+    # Verify deterministic ordering
+    expected_ids = [f"R{i}" for i in range(1, 11)]
+    assert [e["id"] for e in emails] == expected_ids
+
+
+def test_catalog_evidence_persisted(test_db):
+    """Verifies that supporting catalog evidence is persisted to SQLite orders table."""
+    req1 = {"id": "R1", "order_ref": "O1", "text": "Please send 2 individual CAB-1 cables."}
+    process_request(req1, force_replay=True, db_path=test_db)
+
+    order = get_order("O1", db_path=test_db)
+    assert order is not None
+    assert "catalog_evidence" in order
+    evidence = order["catalog_evidence"]
+    assert len(evidence) >= 1
+    assert evidence[0]["matched"] is True
+    assert evidence[0]["sku"] == "CAB-1"
+    assert evidence[0]["match_rule"] in ("exact_sku", "unambiguous_alias")
+
+    # Check raw SQLite column exists and is valid JSON
+    conn = sqlite3.connect(test_db)
+    cur = conn.cursor()
+    cur.execute("SELECT catalog_evidence_json, exception_code FROM orders WHERE request_id = 'R1'")
+    row = cur.fetchone()
+    conn.close()
+    assert row is not None
+    raw_ev_json, code = row
+    assert "CAB-1" in raw_ev_json
+    assert code == ExceptionCode.CLEAN_DRAFT.value
+
+
+def test_multi_line_reviewer_correction_preserves_all_lines(test_db):
+    """Verifies that multi-line reviewer correction updates all line items without dropping lines."""
+    # Step 1: Flagged order R10
+    req10 = {"id": "R10", "order_ref": "O10", "text": "Please send 15 Solar connectors."}
+    process_request(req10, force_replay=True, db_path=test_db)
+
+    # Step 2: Multi-line correction (2 items: CAB-1 x 10 and CAB-2 x 12)
+    corrected_items = [
+        {"sku": "CAB-1", "quantity": 10},
+        {"sku": "CAB-2", "quantity": 12},
+    ]
+    updated = apply_reviewer_correction(
+        order_ref="O10",
+        corrected_items=corrected_items,
+        reviewer="lead_ops",
+        comment="Resolved to multi-line cable bundle per client call",
+        db_path=test_db,
+    )
+
+    assert updated["status"] == "reviewed"
+    assert len(updated["line_items"]) == 2
+    # CAB-1: 10 * 2000 = 20000 gross, 10% disc = 2000 -> 18000 net
+    # CAB-2: 12 * 3000 = 36000 gross, 10% disc = 3600 -> 32400 net
+    # Total: 18000 + 32400 = 50400 cents
+    assert updated["gross_cents"] == 56000
+    assert updated["discount_cents"] == 5600
+    assert updated["total_cents"] == 50400
+
+
+def test_structured_exception_codes_assigned(test_db):
+    """Verifies exact ExceptionCode values assigned for each domain condition."""
+    test_cases = [
+        ({"id": "R1", "order_ref": "O1", "text": "Please send 2 individual CAB-1 cables."}, "CLEAN_DRAFT"),
+        ({"id": "R2", "order_ref": "O2", "text": "Please send one Moon adapter."}, "UNKNOWN_CATALOG_PRODUCT"),
+        ({"id": "R3", "order_ref": "O3", "text": "Send two boxes of the usual cable."}, "AMBIGUOUS_CONTAINER_QUANTITY"),
+        ({"id": "R8", "order_ref": "O8", "text": "We require 5 USB-C cables urgently."}, "AMBIGUOUS_PRODUCT_DESCRIPTION"),
+    ]
+
+    for req, expected_code in test_cases:
+        res = process_request(req, force_replay=True, db_path=test_db)
+        order = get_order_by_request_id(req["id"], db_path=test_db)
+        assert order["exception_code"] == expected_code, f"Failed on {req['id']}: expected {expected_code}, got {order['exception_code']}"
+
+
+def test_identical_vs_conflicting_amendment(test_db):
+    """
+    Domain Rule 4:
+    - Identical re-submission with same order_ref -> duplicate.
+    - Conflicting re-submission with same order_ref -> needs-clarification with AMENDED_ORDER_REF_CONFLICT.
+    """
+    # 1. Initial request O1
+    r1 = {"id": "R1", "order_ref": "O1", "text": "Please send 2 individual CAB-1 cables."}
+    res1 = process_request(r1, force_replay=True, db_path=test_db)
+    assert res1["outcome"] == "draft"
+
+    # 2. Identical re-submission O1 -> duplicate
+    r4_identical = {"id": "R4", "order_ref": "O1", "text": "Please send 2 individual CAB-1 cables."}
+    res4 = process_request(r4_identical, force_replay=True, db_path=test_db)
+    assert res4["outcome"] == "duplicate"
+    assert res4["exception_code"] == ExceptionCode.DUPLICATE_ORDER_REF.value
+    assert res4["new_drafts"] == 0
+
+    # 3. Conflicting amendment O1 -> needs-clarification (AMENDED_ORDER_REF_CONFLICT)
+    r_amended = {"id": "R_AMEND", "order_ref": "O1", "text": "Please amend my order O1 to 5 units of HUB-1 instead."}
+    res_amended = process_request(r_amended, force_replay=True, db_path=test_db)
+    assert res_amended["outcome"] == "needs-clarification"
+    assert res_amended["exception_code"] == ExceptionCode.AMENDED_ORDER_REF_CONFLICT.value
+    assert "draft_email" in res_amended
+
+    order_amended = get_order_by_request_id("R_AMEND", db_path=test_db)
+    assert order_amended["status"] == "needs-clarification"
+    assert order_amended["exception_code"] == ExceptionCode.AMENDED_ORDER_REF_CONFLICT.value
+
+
+def test_created_at_immutability_on_update(test_db):
+    """Verifies that updating an existing order strictly preserves original created_at timestamp."""
+    req = {"id": "R1", "order_ref": "O1", "text": "Please send 2 individual CAB-1 cables."}
+    process_request(req, force_replay=True, db_path=test_db)
+
+    order1 = get_order("O1", db_path=test_db)
+    original_created_at = order1["created_at"]
+
+    # Apply correction
+    apply_reviewer_correction("O1", [{"sku": "CAB-1", "quantity": 3}], reviewer="admin", db_path=test_db)
+
+    order2 = get_order("O1", db_path=test_db)
+    assert order2["created_at"] == original_created_at
+    assert order2["updated_at"] >= original_created_at
+
 

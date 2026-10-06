@@ -1,0 +1,5 @@
+Order-Ref: O6
+Request-ID: R6
+Subject: Purchase Request for O6
+
+Need 12 units of CAB-2 and 1 unit of HUB-1.

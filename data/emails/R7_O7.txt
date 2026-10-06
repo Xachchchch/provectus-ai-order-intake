@@ -1,0 +1,5 @@
+Order-Ref: O7
+Request-ID: R7
+Subject: Purchase Request for O7
+
+Please supply a pack of USB hub.

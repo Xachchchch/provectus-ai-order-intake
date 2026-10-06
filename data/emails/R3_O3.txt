@@ -1,0 +1,5 @@
+Order-Ref: O3
+Request-ID: R3
+Subject: Purchase Request for O3
+
+Send two boxes of the usual cable.

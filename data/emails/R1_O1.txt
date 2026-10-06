@@ -1,0 +1,5 @@
+Order-Ref: O1
+Request-ID: R1
+Subject: Purchase Request for O1
+
+Please send 2 individual CAB-1 cables.

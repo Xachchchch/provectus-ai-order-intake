@@ -1,0 +1,5 @@
+Order-Ref: O2
+Request-ID: R2
+Subject: Purchase Request for O2
+
+Please send one Moon adapter.

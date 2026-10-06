@@ -1,0 +1,5 @@
+Order-Ref: O9
+Request-ID: R9
+Subject: Purchase Request for O9
+
+Ship 3 boxes of CAB-1 to our warehouse.
