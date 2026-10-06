@@ -171,8 +171,9 @@ The pytest suite in [`tests/test_reference_cases.py`](tests/test_reference_cases
 | **Exception Codes** | Structured SQLite exception_code values assigned for all conditions | `test_structured_exception_codes_assigned` | **PASSED** |
 | **Amendment Rule** | Identical re-send -> duplicate; conflicting amendment -> clarification | `test_identical_vs_conflicting_amendment` | **PASSED** |
 | **Immutability** | Database updates strictly preserve original created_at timestamp | `test_created_at_immutability_on_update` | **PASSED** |
+| **Tool Loop** | Native multi-turn LLM function-calling execution with mocked client | `test_native_tool_calling_execution_loop` | **PASSED** |
 
-**Summary: 20 passed in ~1.3s (100% pass rate).**
+**Summary: 21 passed in ~1.4s (100% pass rate).**
 
 ---
 

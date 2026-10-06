@@ -239,6 +239,90 @@ with tab_queue:
                 tot_col2.metric("Total Discount", f"${order.get('discount_cents', 0) / 100:.2f}")
                 tot_col3.metric("Final Total", f"${order.get('total_cents', 0) / 100:.2f} ({order.get('total_cents', 0)}¢)")
 
+                # ── Staff Review, Correction & Approval Form ──────────────────
+                expander_label = (
+                    f"✏️ Staff Review, Correction & Approval Form (Transition to 'reviewed')"
+                    if status == "draft"
+                    else f"✏️ Re-Review / Edit Approved Order {order_ref}"
+                )
+                with st.expander(expander_label, expanded=False):
+                    st.write(
+                        "Confirm or adjust line items below, then click **Confirm Review & Approve** "
+                        "to mark this order as `reviewed` by a human operator:"
+                    )
+
+                    existing_lines = order.get("line_items", [])
+                    default_lines_count = max(1, len(existing_lines))
+
+                    num_lines_draft = st.number_input(
+                        "Number of Line Items:",
+                        min_value=1,
+                        max_value=5,
+                        value=default_lines_count,
+                        step=1,
+                        key=f"num_lines_draft_{order_ref}_{req_id}",
+                    )
+
+                    with st.form(key=f"draft_approval_form_{order_ref}_{req_id}"):
+                        corrected_items_draft = []
+                        sku_options = list(CATALOG.keys())
+
+                        for i in range(int(num_lines_draft)):
+                            st.markdown(f"**Item Line {i + 1}**")
+                            c1, c2 = st.columns([2, 1])
+
+                            default_sku_idx = 0
+                            default_qty = 1
+                            if i < len(existing_lines):
+                                curr_sku = existing_lines[i].get("sku")
+                                if curr_sku in sku_options:
+                                    default_sku_idx = sku_options.index(curr_sku)
+                                default_qty = existing_lines[i].get("quantity", 1)
+
+                            line_sku = c1.selectbox(
+                                f"Catalog Item (Line {i + 1})",
+                                options=sku_options,
+                                index=default_sku_idx,
+                                format_func=lambda s: f"{s} - {CATALOG[s].name} (${CATALOG[s].unit_cents/100:.2f})",
+                                key=f"dsku_{order_ref}_{req_id}_{i}",
+                            )
+                            line_qty = c2.number_input(
+                                f"Quantity (Line {i + 1})",
+                                min_value=1,
+                                max_value=1000,
+                                value=default_qty,
+                                step=1,
+                                key=f"dqty_{order_ref}_{req_id}_{i}",
+                            )
+                            corrected_items_draft.append({"sku": line_sku, "quantity": line_qty})
+
+                        d3, d4 = st.columns([1, 2])
+                        reviewer_name_draft = d3.text_input(
+                            "Reviewer Username",
+                            value="reviewer_ops",
+                            key=f"drev_{order_ref}_{req_id}",
+                        )
+                        reviewer_note_draft = d4.text_input(
+                            "Approval Comment",
+                            value="Operator reviewed and confirmed draft order",
+                            key=f"dcom_{order_ref}_{req_id}",
+                        )
+
+                        approve_btn = st.form_submit_button(
+                            "✅ Confirm Review & Approve Order (Mark as 'reviewed')",
+                            type="primary",
+                        )
+
+                        if approve_btn:
+                            apply_reviewer_correction(
+                                order_ref=order_ref,
+                                corrected_items=corrected_items_draft,
+                                reviewer=reviewer_name_draft,
+                                comment=reviewer_note_draft,
+                            )
+                            st.success(f"✅ Order {order_ref} approved and marked as 'reviewed'!")
+                            st.rerun()
+
             elif status == "duplicate":
                 st.info(f"ℹ️ **Duplicate Handled**: {notes} (Exception Code: `{exception_code}`)")
 

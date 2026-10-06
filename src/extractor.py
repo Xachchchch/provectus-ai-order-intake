@@ -148,15 +148,52 @@ def _run_live_extraction(
 ) -> Dict[str, Any]:
     from src.catalog import lookup_catalog_tool
 
-    user_content = f'Extract order details for request:\nRequest ID: {request_id}\nOrder Reference: {order_ref}\nCustomer text: "{text}"\n\nAfter calling lookup_catalog for every product, return JSON matching this schema:\n{{\n  "request_id": "{request_id}",\n  "order_ref": "{order_ref}",\n  "raw_text": "{text}",\n  "items": [\n    {{\n      "raw_product_text": "<text>",\n      "raw_quantity_text": "<text>",\n      "extracted_sku": "<SKU or null>",\n      "extracted_quantity": "<int or null>",\n      "is_quantity_ambiguous": "<bool>",\n      "ambiguity_reason": "<reason or null>"\n    }}\n  ],\n  "confidence": 0.95\n}}\n'
+    system_prompt = (
+        "You are an accurate, strict order intake information extractor.\n"
+        "Given a customer's raw order request text, extract all requested items and quantities.\n"
+        "You have access to a 'lookup_catalog' tool. Call 'lookup_catalog' ONLY for the specific products "
+        "mentioned in the customer text to verify the canonical SKU and pricing.\n"
+        "Do not query products that are not requested.\n"
+        "Once all requested products are verified via lookup_catalog, stop calling tools and output the final JSON immediately.\n\n"
+        "CRITICAL RULES:\n"
+        "1. Extract exact product names or SKU codes mentioned.\n"
+        "2. Quantities must be positive whole numbers of individual units.\n"
+        "3. NEVER infer container quantities ('box', 'pack', 'crate', 'several'). Set extracted_quantity: null, is_quantity_ambiguous: true.\n"
+        "4. Return ONLY a valid JSON object matching the requested schema."
+    )
+
+    user_content = (
+        f'Extract order details for request:\n'
+        f'Request ID: {request_id}\n'
+        f'Order Reference: {order_ref}\n'
+        f'Customer text: "{text}"\n\n'
+        f'Return JSON matching schema:\n'
+        f'{{\n'
+        f'  "request_id": "{request_id}",\n'
+        f'  "order_ref": "{order_ref}",\n'
+        f'  "raw_text": "{text}",\n'
+        f'  "items": [\n'
+        f'    {{\n'
+        f'      "raw_product_text": "<text>",\n'
+        f'      "raw_quantity_text": "<text>",\n'
+        f'      "extracted_sku": "<SKU or null>",\n'
+        f'      "extracted_quantity": <int or null>,\n'
+        f'      "is_quantity_ambiguous": <bool>,\n'
+        f'      "ambiguity_reason": "<reason or null>"\n'
+        f'    }}\n'
+        f'  ],\n'
+        f'  "confidence": 0.95\n'
+        f'}}\n'
+    )
 
     messages: List[Dict[str, Any]] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_content},
     ]
     tool_calls_log: List[Dict[str, Any]] = []
+    seen_queries = set()
 
-    for _round in range(8):
+    for _round in range(6):
         response = client.chat.completions.create(
             model=model,
             temperature=0.0,
@@ -166,14 +203,12 @@ def _run_live_extraction(
         )
 
         choice = response.choices[0]
-        finish_reason = choice.finish_reason
         assistant_msg = choice.message
+        messages.append(assistant_msg)
 
-        messages.append(assistant_msg.model_dump(exclude_none=True))
-
-        if finish_reason == "tool_calls" and assistant_msg.tool_calls:
+        if assistant_msg.tool_calls:
             for tc in assistant_msg.tool_calls:
-                fn_args = json.loads(tc.function.arguments)
+                fn_args = json.loads(tc.function.arguments) if tc.function.arguments else {}
                 query = fn_args.get("query", "")
                 tool_result = lookup_catalog_tool(query)
                 tool_calls_log.append({
@@ -182,16 +217,42 @@ def _run_live_extraction(
                     "arguments": fn_args,
                     "result": tool_result,
                 })
+                
+                content_payload = tool_result
+                if query in seen_queries:
+                    content_payload = {
+                        **tool_result,
+                        "instruction": "Item already verified. Stop calling tools and output the final JSON now."
+                    }
+                seen_queries.add(query)
+
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc.id,
-                    "content": json.dumps(tool_result),
+                    "content": json.dumps(content_payload),
                 })
         else:
+            # Model completed tool calling rounds and returned the final JSON output
             content = assistant_msg.content or "{}"
-            content = re.sub(r"^{3}(?:json)?\s*", "", content.strip())
-            content = re.sub(r"\s*{3}$", "", content.strip())
-            raw_json = json.loads(content)
+            content = content.strip()
+            if content.startswith("```"):
+                lines = content.splitlines()
+                if lines and lines[0].startswith("```"):
+                    lines = lines[1:]
+                if lines and lines[-1].startswith("```"):
+                    lines = lines[:-1]
+                content = "\n".join(lines).strip()
+
+            try:
+                raw_json = json.loads(content)
+            except json.JSONDecodeError:
+                first_brace = content.find("{")
+                last_brace = content.rfind("}")
+                if first_brace != -1 and last_brace != -1:
+                    raw_json = json.loads(content[first_brace : last_brace + 1])
+                else:
+                    raise
+
             raw_json["is_cached"] = False
             raw_json["model"] = model
             raw_json["tool_calls_log"] = tool_calls_log
@@ -199,7 +260,7 @@ def _run_live_extraction(
             return validated_payload.model_dump()
 
     raise ExtractionError(
-        f"LLM did not produce a final answer after 8 tool-call rounds for {request_id}."
+        f"LLM did not produce a final answer after tool-call rounds for {request_id}."
     )
 
 
