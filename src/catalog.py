@@ -1,5 +1,6 @@
 """Catalog definitions and deterministic matcher for AI Order Intake."""
 
+import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
@@ -117,7 +118,7 @@ def match_catalog_item(text: str) -> Tuple[Optional[CatalogItem], MatchStatus, s
     # Check if string matches multiple SKUs partially
     matching_items = []
     for sku, item in CATALOG.items():
-        if sku.lower() in norm or normalize_text(item.name) in norm:
+        if re.search(r"\b" + re.escape(normalize_text(sku)) + r"\b", norm):
             matching_items.append(item)
 
     if len(matching_items) == 1:
@@ -218,7 +219,7 @@ def lookup_catalog_tool(query: str) -> Dict[str, Any]:
     # Partial matches
     matching_items = []
     for sku, item in CATALOG.items():
-        if sku.lower() in norm or normalize_text(item.name) in norm:
+        if re.search(r"\b" + re.escape(normalize_text(sku)) + r"\b", norm):
             matching_items.append(item)
 
     if len(matching_items) == 1:

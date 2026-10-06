@@ -17,12 +17,12 @@
       "files": [
         "src/extractor.py"
       ],
-      "notes": "openai/gpt-oss-120b via Groq and gpt-4o-mini via OpenAI with temperature 0.0 and json_object response format. Offline cached responses in cached_responses/ for zero-credential deterministic replay."
+      "notes": "openai/gpt-oss-120b via Groq and gpt-4o-mini via OpenAI with temperature 0.0 and native Tool Calling (CATALOG_LOOKUP_TOOL). Offline cached responses in cached_responses/ for zero-credential deterministic replay."
     },
     "skills": {
       "status": "not-used",
       "files": [],
-      "notes": "No external skills installed; standard Antigravity IDE and Groq Llama 3.3 were used directly."
+      "notes": "No external skills installed; standard Antigravity IDE and Groq openai/gpt-oss-120b were used directly."
     },
     "agent_instructions_and_subagents": {
       "status": "not-used",
@@ -40,7 +40,7 @@
         "src/extractor.py",
         "tasks/orders/domain.md"
       ],
-      "notes": "System prompt enforcing strict unit quantities, forbidding packaging inference (box, pack), and returning structured JSON."
+      "notes": "System prompt enforcing strict unit quantities, forbidding packaging inference (box, pack), and requiring native catalog lookup before final JSON extraction."
     },
     "tool_and_mcp_settings": {
       "status": "used",

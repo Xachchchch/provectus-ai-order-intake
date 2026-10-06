@@ -91,35 +91,23 @@ class ExtractionPayload(BaseModel):
     tool_calls_log: List[Dict[str, Any]] = Field(default_factory=list)
 
 
-# ---------------------------------------------------------------------------
-# Extraction prompt
-# ---------------------------------------------------------------------------
-SYSTEM_PROMPT = """You are an accurate, strict order intake information extractor.
-Given a customer's raw order request text, extract all requested items and quantities.
-You have access to a 'lookup_catalog' tool - call it for EVERY product mentioned to
-verify the canonical SKU and pricing BEFORE producing the final JSON.
-
-CRITICAL RULES:
-1. Extract exact product names or SKU codes mentioned.
-2. Quantities must be positive whole numbers of individual units.
-3. NEVER guess or infer how many items a container contains (e.g. "box", "pack", "crate",
-   "bundle", "case", "several", "a couple").
-   If any such vague or container term is used, set "extracted_quantity": null,
-   "is_quantity_ambiguous": true, and "ambiguity_reason" describing the ambiguity.
-4. If an exact SKU from the catalog (CAB-1, CAB-2, HUB-1) is identified via the lookup,
-   populate "extracted_sku", otherwise set "extracted_sku": null.
-5. Return ONLY a valid JSON object matching the requested schema after all tool calls are done.
-"""
 
 
 # ---------------------------------------------------------------------------
 # Cache helpers
 # ---------------------------------------------------------------------------
-def load_cached_response(request_id: str, cache_dir: str = CACHE_DIR) -> Optional[Dict[str, Any]]:
+def load_cached_response(
+    request_id: str,
+    cache_dir: str = CACHE_DIR,
+    expected_text: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
     cache_file = os.path.join(cache_dir, f"{request_id}.json")
     if os.path.exists(cache_file):
         with open(cache_file, "r", encoding="utf-8") as f:
             raw_data = json.load(f)
+        # Never serve old cache if customer text changed or was edited
+        if expected_text is not None and raw_data.get("raw_text", "").strip() != expected_text.strip():
+            return None
         raw_data["is_cached"] = True
         if "model" not in raw_data:
             raw_data["model"] = "openai/gpt-oss-120b"
@@ -287,14 +275,14 @@ def extract_order_information(
     openai_key = os.getenv("OPENAI_API_KEY")
 
     if force_replay:
-        cached = load_cached_response(request_id, cache_dir=cache_dir)
+        cached = load_cached_response(request_id, cache_dir=cache_dir, expected_text=text)
         if cached:
             return cached
         raise ExtractionError(
             f"force_replay=True but no cached response found for '{request_id}'."
         )
 
-    cached = load_cached_response(request_id, cache_dir=cache_dir)
+    cached = load_cached_response(request_id, cache_dir=cache_dir, expected_text=text)
     if cached:
         return cached
 

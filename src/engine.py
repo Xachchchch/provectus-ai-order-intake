@@ -2,6 +2,7 @@
 
 from enum import Enum
 import os
+import re
 from typing import Any, Dict, List, Optional
 
 from src.catalog import CATALOG, MatchStatus, get_catalog_item, lookup_catalog_tool, match_catalog_item
@@ -30,6 +31,18 @@ class ExceptionCode(str, Enum):
     AMENDED_ORDER_REF_CONFLICT = "AMENDED_ORDER_REF_CONFLICT"
     EXTRACTION_FAILED = "EXTRACTION_FAILED"
 
+_NUMBER_WORDS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+    "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "fifteen": 15, "twenty": 20,
+}
+
+
+def _quantity_supported(qty: int, raw_quantity_text: Optional[str]) -> bool:
+    """True only if the customer's own quantity wording contains the number the model extracted."""
+    text = (raw_quantity_text or "").lower()
+    if re.search(rf"(?<![\d.]){qty}(?!\d|\.\d)", text):
+        return True
+    return any(v == qty and re.search(rf"\b{w}\b", text) for w, v in _NUMBER_WORDS.items())
 
 def generate_clarification_email(
     request_id: str,
@@ -113,7 +126,7 @@ def process_request(
 
     # 0. Idempotency Guard: If this request_id was already processed, preserve existing state
     existing_by_req_id = get_order_by_request_id(request_id, db_path=db_path)
-    if existing_by_req_id:
+    if existing_by_req_id and existing_by_req_id["status"] != "failed":
         return {
             "id": request_id,
             "order_ref": order_ref,
@@ -126,20 +139,103 @@ def process_request(
             "message": f"Request {request_id} already processed with status '{existing_by_req_id['status']}'.",
         }
 
-    # 1. Deduplication Check (Domain Rule 4: Same order_ref describes the same order)
-    # Reprocessing an existing order_ref strictly reuses the draft without creating a new order row
-    existing_order = get_order(order_ref, db_path=db_path)
-    if existing_order and existing_order["request_id"] != request_id:
+   # Check for unreadable/corrupt input files
+    if request.get("is_corrupt"):
+        err = request.get("error", "unreadable input file")
+        save_order(
+            {
+                "request_id": request_id,
+                "order_ref": order_ref,
+                "raw_text": text,
+                "status": "failed",
+                "line_items": [],
+                "gross_cents": 0,
+                "discount_cents": 0,
+                "total_cents": 0,
+                "notes": f"Unusable input: {err}",
+                "is_cached": False,
+                "model": "none",
+                "catalog_evidence": [],
+                "exception_code": ExceptionCode.EXTRACTION_FAILED.value,
+            },
+            db_path=db_path,
+        )
         return {
             "id": request_id,
             "order_ref": order_ref,
-            "outcome": "duplicate",
-            "same_order_as": existing_order["request_id"],
-            "new_drafts": 0,
-            "exception_code": ExceptionCode.DUPLICATE_ORDER_REF.value,
-            "message": f"Request {request_id} shares order_ref '{order_ref}' with '{existing_order['request_id']}'. Reused existing order without creating a new draft.",
+            "outcome": "failed",
+            "reason": f"Unusable input: {err}",
+            "exception_code": ExceptionCode.EXTRACTION_FAILED.value,
         }
 
+
+    # 1. Deduplication & Amendment Reprocessing Check (Domain Rule 4)
+    existing_order = get_order(order_ref, db_path=db_path)
+    if existing_order and existing_order["request_id"] != request_id:
+        is_identical = (text.strip() == existing_order["raw_text"].strip())
+
+        if is_identical:
+            # Identical submission -> True Duplicate (status='duplicate')
+            dup_data = {
+                "request_id": request_id,
+                "order_ref": order_ref,
+                "raw_text": text,
+                "status": "duplicate",
+                "line_items": [],
+                "gross_cents": 0,
+                "discount_cents": 0,
+                "total_cents": 0,
+                "notes": f"Duplicate submission of request {existing_order['request_id']} (order_ref '{order_ref}').",
+                "is_cached": True,
+                "model": "system_dedup",
+                "catalog_evidence": [],
+                "exception_code": ExceptionCode.DUPLICATE_ORDER_REF.value,
+            }
+            save_order(dup_data, db_path=db_path)
+            return {
+                "id": request_id,
+                "order_ref": order_ref,
+                "outcome": "duplicate",
+                "same_order_as": existing_order["request_id"],
+                "new_drafts": 0,
+                "exception_code": ExceptionCode.DUPLICATE_ORDER_REF.value,
+                "message": f"Duplicate request for order_ref '{order_ref}'; identical to '{existing_order['request_id']}'.",
+            }
+        else:
+            # Modified text under same order_ref -> Conflicting Amendment (status='needs-clarification')
+            conflict_issue = {
+                "reason": "Amended order request conflicting with existing submission under identical order_ref",
+                "product": "conflicting_amendment",
+                "quantity": None,
+            }
+            draft_info = generate_clarification_email(request_id, order_ref, [conflict_issue])
+            save_clarification_draft(draft_info, db_path=db_path)
+
+            conflict_data = {
+                "request_id": request_id,
+                "order_ref": order_ref,
+                "raw_text": text,
+                "status": "needs-clarification",
+                "line_items": [],
+                "gross_cents": 0,
+                "discount_cents": 0,
+                "total_cents": 0,
+                "notes": f"Customer submitted an amended request with conflicting text under existing order_ref '{order_ref}'. Manual review required.",
+                "is_cached": True,
+                "model": "system_amendment",
+                "catalog_evidence": [],
+                "exception_code": ExceptionCode.AMENDED_ORDER_REF_CONFLICT.value,
+            }
+            save_order(conflict_data, db_path=db_path)
+            return {
+                "id": request_id,
+                "order_ref": order_ref,
+                "outcome": "needs-clarification",
+                "reason": "Amended order request conflicting with existing submission",
+                "draft_email": draft_info["draft_email"],
+                "exception_code": ExceptionCode.AMENDED_ORDER_REF_CONFLICT.value,
+                "new_drafts": 0,
+            }
     # 2. Information Extraction
     try:
         extracted = extract_order_information(
@@ -253,10 +349,23 @@ def process_request(
 
         item_has_issue = False
 
+        # Quantity validation: check ambiguity, source-text support, and positive integers
         if is_qty_ambiguous:
             issues.append(
                 {
                     "reason": ambiguity_reason or "ambiguous quantity (box/pack/vague unit)",
+                    "product": raw_product,
+                    "quantity": item.get("raw_quantity_text"),
+                }
+            )
+            item_has_issue = True
+            if not assigned_exception_code:
+                assigned_exception_code = ExceptionCode.AMBIGUOUS_CONTAINER_QUANTITY
+        elif qty is not None and qty > 0 and not _quantity_supported(qty, item.get("raw_quantity_text")):
+            # Catches model hallucinations where extracted number does not appear in customer text
+            issues.append(
+                {
+                    "reason": "ambiguous quantity (stated number could not be confirmed in the request text)",
                     "product": raw_product,
                     "quantity": item.get("raw_quantity_text"),
                 }
@@ -276,13 +385,22 @@ def process_request(
             if not assigned_exception_code:
                 assigned_exception_code = ExceptionCode.AMBIGUOUS_CONTAINER_QUANTITY
 
-        # Local Catalog Lookup Tool Call
-        # Prefer exact extracted_sku if available, otherwise search by raw_product
-        lookup_query = extracted_sku if extracted_sku else raw_product
-        lookup_result = lookup_catalog_tool(lookup_query)
-        if not lookup_result["matched"] and extracted_sku and raw_product != extracted_sku:
-            # Fallback query using raw_product
-            lookup_result = lookup_catalog_tool(raw_product)
+        # The customer's own words decide the match; the model's extracted_sku is only a hint
+        lookup_result = lookup_catalog_tool(raw_product)
+        if (
+            lookup_result["matched"]
+            and extracted_sku
+            and extracted_sku.strip().upper() != lookup_result["sku"]
+        ):
+            lookup_result = {
+                **lookup_result,
+                "matched": False,
+                "match_rule": "ambiguous_multi_match",
+                "evidence": (
+                    f"Ambiguous product: proposed SKU {extracted_sku} disagrees with "
+                    f"catalog match {lookup_result['sku']} for '{raw_product}'"
+                ),
+            }
 
         catalog_evidence.append(lookup_result)
 
@@ -325,19 +443,16 @@ def process_request(
         # Preserve any already-resolved valid line items so the reviewer does not have to
         # re-enter them manually. Orders where ALL items have issues keep an empty list.
         preserved_lines = valid_line_items if valid_line_items else []
-        preserved_pricing = calculate_order_pricing(preserved_lines) if preserved_lines else {
-            "line_items": [], "gross_cents": 0, "discount_cents": 0, "total_cents": 0
-        }
 
         order_data = {
             "request_id": request_id,
             "order_ref": order_ref,
             "raw_text": text,
             "status": "needs-clarification",
-            "line_items": preserved_pricing["line_items"],
-            "gross_cents": preserved_pricing["gross_cents"],
-            "discount_cents": preserved_pricing["discount_cents"],
-            "total_cents": preserved_pricing["total_cents"],
+            "line_items": preserved_lines,
+            "gross_cents": 0,
+            "discount_cents": 0,
+            "total_cents": 0,  # Explicitly 0 for unapproved exception orders
             "notes": f"Flagged: {combined_reason}",
             "is_cached": is_cached,
             "model": model_name,
@@ -407,10 +522,19 @@ def batch_process(
     force_replay: bool = True,
     db_path: str = DEFAULT_DB_PATH,
 ) -> List[Dict[str, Any]]:
-    """Process a batch of incoming order requests."""
+    """Process a batch of incoming order requests with per-request fault isolation."""
     results = []
     for req in requests:
-        res = process_request(req, force_replay=force_replay, db_path=db_path)
+        try:
+            res = process_request(req, force_replay=force_replay, db_path=db_path)
+        except Exception as exc:  # One bad request must never crash the entire batch
+            res = {
+                "id": req.get("id", "unknown"),
+                "order_ref": req.get("order_ref", "unknown"),
+                "outcome": "failed",
+                "reason": f"Unhandled processing error: {exc}",
+                "exception_code": ExceptionCode.EXTRACTION_FAILED.value,
+            }
         results.append(res)
     return results
 

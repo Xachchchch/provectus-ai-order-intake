@@ -1,6 +1,7 @@
 """Streamlit-based interactive operations queue with status filtering, reviewer corrections, and analytics."""
 
 from collections import Counter
+import html
 import json
 import os
 import streamlit as st
@@ -119,11 +120,33 @@ if st.sidebar.button("🧹 Reset Database"):
     st.sidebar.info("Database reset.")
     st.rerun()
 
+# ── Optional Enhancement: Export Finalized Orders ─────────────────────────────
 st.sidebar.markdown("---")
-st.sidebar.header("📚 Official Product Catalog")
-for sku, item in CATALOG.items():
-    st.sidebar.markdown(f"**{sku}**: {item.name} — `${item.unit_cents / 100:.2f}` ({item.unit_cents}¢)")
-st.sidebar.caption("Bulk Rule: >=10 units per line receives 10% discount (rounded HALF_UP).")
+st.sidebar.header("📥 Data Export")
+reviewed_orders = [o for o in all_orders if o["status"] in ("draft", "reviewed")]
+if reviewed_orders:
+    export_payload = json.dumps(
+        [
+            {
+                "order_ref": o["order_ref"],
+                "request_id": o["request_id"],
+                "status": o["status"],
+                "line_items": o.get("line_items", []),
+                "total_cents": o.get("total_cents", 0),
+                "total_usd": f"${o.get('total_cents', 0) / 100:.2f}",
+                "updated_at": o.get("updated_at"),
+            }
+            for o in reviewed_orders
+        ],
+        indent=2,
+    )
+    st.sidebar.download_button(
+        label="📥 Export Finalized Orders (JSON)",
+        data=export_payload,
+        file_name="finalized_orders.json",
+        mime="application/json",
+        help="Export all verified draft and reviewed orders in structured JSON format.",
+    )
 
 # Retrieve orders and metrics from DB
 all_orders = list_orders()
@@ -185,268 +208,139 @@ with tab_queue:
         elif status == "reviewed":
             badge_label = "REVIEWED (BY HUMAN)"
 
-        cache_label = f"Cached Replay ({model_name})" if is_cached else f"Live API ({model_name})"
+        cache_label = f"Cached ({model_name})" if is_cached else f"Live API ({model_name})"
 
         with st.container():
             st.markdown(
                 f"""
                 <div class="order-card">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
                         <div>
-                            <span style="font-size: 1.2rem; font-weight: 700; color: #0f172a;">Order {order_ref}</span>
-                            <span style="font-size: 0.9rem; color: #64748b; margin-left: 10px;">(Request ID: {req_id})</span>
-                            <span class="cache-tag" style="margin-left: 8px;">{cache_label}</span>
+                            <span style="font-size: 1.15rem; font-weight: 700;">Order #{html.escape(order_ref)}</span>
+                            <span style="font-size: 0.85rem; color: #64748b; margin-left: 8px;">(Request ID: {html.escape(req_id)})</span>
+                            <span class="cache-tag" style="margin-left: 6px;">{html.escape(cache_label)}</span>
                         </div>
                         <span class="status-badge {badge_class}">{badge_label}</span>
-                    </div>
-                    <div style="color: #334155; font-size: 0.95rem; margin-bottom: 10px;">
-                        <strong>Customer Request:</strong> <em>"{raw_text}"</em>
                     </div>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
 
-            # Details per status
-            if status in ("draft", "reviewed"):
-                line_items = order.get("line_items", [])
-                if line_items:
-                    table_data = []
-                    for item in line_items:
-                        table_data.append(
-                            {
-                                "SKU": item["sku"],
-                                "Product Name": item["name"],
-                                "Quantity": item["quantity"],
-                                "Unit Price": f"${item['unit_cents'] / 100:.2f}",
-                                "Gross": f"${item['gross_cents'] / 100:.2f}",
-                                "10% Bulk Discount": f"-${item['discount_cents'] / 100:.2f}" if item['discount_cents'] > 0 else "$0.00",
-                                "Net Total": f"${item['total_cents'] / 100:.2f}",
-                            }
-                        )
-                    st.table(table_data)
+            # ── TRUE SIDE-BY-SIDE REVIEW INSPECTOR ────────────────────────────
+            col_left, col_right = st.columns([1, 1])
 
-                # Dedicated Catalog Evidence View
+            # LEFT COLUMN: Original Request & Catalog Grounding Evidence
+            with col_left:
+                st.markdown("##### 📄 Original Customer Email")
+                st.info(f"\"{raw_text}\"")
+
                 if catalog_evidence:
-                    with st.expander("🔍 Supporting Catalog Match Evidence", expanded=False):
-                        for ev in catalog_evidence:
-                            ev_text = ev.get("evidence", "")
-                            rule = ev.get("match_rule", "catalog_lookup")
-                            st.markdown(f"- `<{rule}>` **{ev_text}**")
+                    st.markdown("##### 🔍 Supporting Catalog Match Evidence")
+                    for ev in catalog_evidence:
+                        rule = ev.get("match_rule", "catalog_lookup")
+                        ev_text = ev.get("evidence", "")
+                        st.caption(f"- `{rule}`: **{ev_text}**")
 
-                tot_col1, tot_col2, tot_col3 = st.columns([2, 1, 1])
-                tot_col1.caption(f"Created: {created_at} | Exception Code: {exception_code or 'CLEAN_DRAFT'} | {notes}")
-                tot_col2.metric("Total Discount", f"${order.get('discount_cents', 0) / 100:.2f}")
-                tot_col3.metric("Final Total", f"${order.get('total_cents', 0) / 100:.2f} ({order.get('total_cents', 0)}¢)")
+                if status == "needs-clarification":
+                    draft = get_clarification_draft(order_ref)
+                    if draft:
+                        with st.expander("✉️ Customer Clarification Email Draft", expanded=False):
+                            st.text_input("Subject", value=draft["subject"], disabled=True, key=f"s_{order_ref}_{req_id}")
+                            st.text_area("Body", value=draft["draft_email"], height=140, disabled=True, key=f"b_{order_ref}_{req_id}")
 
-                # ── Staff Review, Correction & Approval Form ──────────────────
-                expander_label = (
-                    f"✏️ Staff Review, Correction & Approval Form (Transition to 'reviewed')"
-                    if status == "draft"
-                    else f"✏️ Re-Review / Edit Approved Order {order_ref}"
-                )
-                with st.expander(expander_label, expanded=False):
-                    st.write(
-                        "Confirm or adjust line items below, then click **Confirm Review & Approve** "
-                        "to mark this order as `reviewed` by a human operator:"
-                    )
+                elif status == "duplicate":
+                    st.warning(f"ℹ️ {notes}")
 
-                    existing_lines = order.get("line_items", [])
-                    default_lines_count = max(1, len(existing_lines))
+            # RIGHT COLUMN: Proposed Order, Pricing, & Reviewer Action
+            with col_right:
+                st.markdown("##### 📦 Proposed Order & Verification")
 
-                    # Initialize session state for draft line items if not present
-                    state_key = f"lines_{order_ref}_{req_id}"
-                    if state_key not in st.session_state:
-                        st.session_state[state_key] = [
-                            {"sku": item.get("sku", "CAB-1"), "quantity": item.get("quantity", 1)}
-                            for item in existing_lines
-                        ] or [{"sku": "CAB-1", "quantity": 1}]
-
-                    current_item_count = len(st.session_state[state_key])
-
-                    # Controls to Add / Remove lines without losing entered values
-                    col_b1, col_b2, col_info = st.columns([1, 1, 3])
-                    if col_b1.button("➕ Add Item Line", key=f"add_{state_key}"):
-                        st.session_state[state_key].append({"sku": "CAB-1", "quantity": 1})
-                        st.rerun()
-                    if col_b2.button("➖ Remove Line", key=f"rem_{state_key}") and current_item_count > 1:
-                        st.session_state[state_key].pop()
-                        st.rerun()
-                    col_info.caption(f"Managing **{current_item_count}** line item(s).")
-
-                    with st.form(key=f"draft_approval_form_{order_ref}_{req_id}"):
-                        corrected_items_draft = []
-                        sku_options = list(CATALOG.keys())
-
-                        for i, item_data in enumerate(st.session_state[state_key]):
-                            st.markdown(f"**Item Line {i + 1}**")
-                            c1, c2 = st.columns([2, 1])
-
-                            curr_sku = item_data.get("sku", "CAB-1")
-                            default_sku_idx = sku_options.index(curr_sku) if curr_sku in sku_options else 0
-                            default_qty = int(item_data.get("quantity", 1))
-
-                            line_sku = c1.selectbox(
-                                f"Catalog Item (Line {i + 1})",
-                                options=sku_options,
-                                index=default_sku_idx,
-                                format_func=lambda s: f"{s} - {CATALOG[s].name} (${CATALOG[s].unit_cents/100:.2f})",
-                                key=f"dsku_{order_ref}_{req_id}_{i}",
-                            )
-                            line_qty = c2.number_input(
-                                f"Quantity (Line {i + 1})",
-                                min_value=1,
-                                max_value=1000,
-                                value=default_qty,
-                                step=1,
-                                key=f"dqty_{order_ref}_{req_id}_{i}",
-                            )
-                            corrected_items_draft.append({"sku": line_sku, "quantity": line_qty})
-
-                        d3, d4 = st.columns([1, 2])
-                        reviewer_name_draft = d3.text_input(
-                            "Reviewer Username",
-                            value="reviewer_ops",
-                            key=f"drev_{order_ref}_{req_id}",
+                if status in ("draft", "reviewed"):
+                    line_items = order.get("line_items", [])
+                    if line_items:
+                        st.table(
+                            [
+                                {
+                                    "SKU": i["sku"],
+                                    "Product": i["name"],
+                                    "Qty": i["quantity"],
+                                    "Unit Price": f"${i['unit_cents']/100:.2f}",
+                                    "10% Disc": f"-${i['discount_cents']/100:.2f}",
+                                    "Total": f"${i['total_cents']/100:.2f}",
+                                }
+                                for i in line_items
+                            ]
                         )
-                        reviewer_note_draft = d4.text_input(
-                            "Approval Comment",
-                            value="Operator reviewed and confirmed draft order",
-                            key=f"dcom_{order_ref}_{req_id}",
-                        )
+                    tot1, tot2 = st.columns(2)
+                    tot1.metric("Bulk Discount", f"${order.get('discount_cents', 0)/100:.2f}")
+                    tot2.metric("Total Payable", f"${order.get('total_cents', 0)/100:.2f} ({order.get('total_cents', 0)}¢)")
 
-                        approve_btn = st.form_submit_button(
-                            "✅ Confirm Review & Approve Order (Mark as 'reviewed')",
-                            type="primary",
-                        )
+                elif status == "needs-clarification":
+                    st.error(f"❌ Exception: {notes} (`{exception_code}`)")
+                    st.caption("Reviewer must confirm line items to establish payable total.")
+                elif status == "failed":
+                    st.error(f"⚠️ Processing failed (`{exception_code}`): {notes}")
+                    st.caption("No order was proposed. Fix the input file or model access and re-ingest to retry.")
 
-                        if approve_btn:
-                            apply_reviewer_correction(
-                                order_ref=order_ref,
-                                corrected_items=corrected_items_draft,
-                                reviewer=reviewer_name_draft,
-                                comment=reviewer_note_draft,
-                            )
-                            st.session_state.pop(state_key, None)
-                            st.success(f"✅ Order {order_ref} approved and marked as 'reviewed'!")
+                # Reviewer Form (Works for both Draft and Clarification)
+                if status in ("draft", "reviewed", "needs-clarification"):
+                    exp_label = "✏️ Confirm & Approve Order" if status == "draft" else "✏️ Resolve Exception & Edit Lines"
+                    with st.expander(exp_label, expanded=(status == "needs-clarification")):
+                        existing_lines = order.get("line_items", [])
+                        state_key = f"lines_{order_ref}_{req_id}"
+                        if state_key not in st.session_state:
+                            st.session_state[state_key] = [
+                                {"sku": item.get("sku", "CAB-1"), "quantity": item.get("quantity", 1)}
+                                for item in existing_lines
+                            ] or [{"sku": "CAB-1", "quantity": 1}]
+
+                        btn_c1, btn_c2, _ = st.columns([1, 1, 2])
+                        if btn_c1.button("➕ Add Line", key=f"add_{state_key}"):
+                            st.session_state[state_key].append({"sku": "CAB-1", "quantity": 1})
+                            st.rerun()
+                        if btn_c2.button("➖ Remove", key=f"rem_{state_key}") and len(st.session_state[state_key]) > 1:
+                            st.session_state[state_key].pop()
                             st.rerun()
 
-            elif status == "duplicate":
-                st.info(f"ℹ️ **Duplicate Handled**: {notes} (Exception Code: `{exception_code}`)")
+                        with st.form(key=f"form_{order_ref}_{req_id}"):
+                            sku_opts = list(CATALOG.keys())
+                            updated_lines = []
+                            for idx, it in enumerate(st.session_state[state_key]):
+                                c_sku, c_qty = st.columns([2, 1])
+                                def_idx = sku_opts.index(it["sku"]) if it["sku"] in sku_opts else 0
+                                sel_s = c_sku.selectbox(f"Line {idx+1} SKU", sku_opts, index=def_idx, key=f"s_{state_key}_{idx}")
+                                sel_q = c_qty.number_input(f"Qty", min_value=1, value=int(it.get("quantity", 1)), key=f"q_{state_key}_{idx}")
+                                updated_lines.append({"sku": sel_s, "quantity": sel_q})
 
-            elif status == "needs-clarification":
-                st.warning(f"⚠️ **Exception Flagged**: {notes} (Exception Code: `{exception_code}`)")
+                            r_user = st.text_input("Reviewer Name", value="ops_reviewer", key=f"u_{state_key}")
+                            r_comm = st.text_input("Comment", value="Confirmed and approved by operator", key=f"c_{state_key}")
 
-                # Show draft inquiry email
-                draft = get_clarification_draft(order_ref)
-                if draft:
-                    with st.expander("✉️ View Customer Clarification Email Draft", expanded=False):
-                        st.text_input("Subject", value=draft["subject"], disabled=True, key=f"subj_{order_ref}_{req_id}")
-                        st.text_area("Email Body", value=draft["draft_email"], height=200, disabled=True, key=f"body_{order_ref}_{req_id}")
+                            if st.form_submit_button("✅ Save & Mark as 'reviewed'", type="primary"):
+                                apply_reviewer_correction(order_ref, updated_lines, reviewer=r_user, comment=r_comm)
+                                st.session_state.pop(state_key, None)
+                                st.success(f"Order #{order_ref} marked as 'reviewed'!")
+                                st.rerun()
 
-                # Catalog Lookup Evidence for Exception
-                if catalog_evidence:
-                    with st.expander("🔍 Catalog Lookup Findings", expanded=False):
-                        for ev in catalog_evidence:
-                            st.markdown(f"- **Query**: *{ev.get('query')}* — Result: `{ev.get('match_rule')}`: {ev.get('evidence')}")
-
-                # Multi-Line Human Reviewer Correction Form
-                with st.expander(f"✏️ Manual Multi-Line Reviewer Correction for {order_ref}", expanded=True):
-                    st.write("Resolve this exception by specifying confirmed catalog items and quantities across all order lines (updates status to **'reviewed'**):")
-
-                    existing_lines = order.get("line_items", [])
-
-                    # Initialize session state for clarification line items
-                    corr_state_key = f"corr_lines_{order_ref}_{req_id}"
-                    if corr_state_key not in st.session_state:
-                        st.session_state[corr_state_key] = [
-                            {"sku": item.get("sku", "CAB-1"), "quantity": item.get("quantity", 1)}
-                            for item in existing_lines
-                        ] or [{"sku": "CAB-1", "quantity": 1}]
-
-                    current_corr_count = len(st.session_state[corr_state_key])
-
-                    # Controls to Add / Remove lines without losing entered values
-                    col_c1, col_c2, col_cinfo = st.columns([1, 1, 3])
-                    if col_c1.button("➕ Add Item Line", key=f"add_{corr_state_key}"):
-                        st.session_state[corr_state_key].append({"sku": "CAB-1", "quantity": 1})
-                        st.rerun()
-                    if col_c2.button("➖ Remove Line", key=f"rem_{corr_state_key}") and current_corr_count > 1:
-                        st.session_state[corr_state_key].pop()
-                        st.rerun()
-                    col_cinfo.caption(f"Managing **{current_corr_count}** line item(s).")
-
-                    with st.form(key=f"correction_form_{order_ref}_{req_id}"):
-                        corrected_items_input = []
-                        sku_options = list(CATALOG.keys())
-
-                        for i, item_data in enumerate(st.session_state[corr_state_key]):
-                            st.markdown(f"**Item Line {i+1}**")
-                            c1, c2 = st.columns([2, 1])
-
-                            curr_sku = item_data.get("sku", "CAB-1")
-                            default_sku_idx = sku_options.index(curr_sku) if curr_sku in sku_options else 0
-                            default_qty = int(item_data.get("quantity", 1))
-
-                            line_sku = c1.selectbox(
-                                f"Catalog Item (Line {i+1})",
-                                options=sku_options,
-                                index=default_sku_idx,
-                                format_func=lambda s: f"{s} - {CATALOG[s].name} (${CATALOG[s].unit_cents/100:.2f})",
-                                key=f"sku_{order_ref}_{req_id}_{i}",
-                            )
-                            line_qty = c2.number_input(
-                                f"Quantity (Line {i+1})",
-                                min_value=1,
-                                max_value=1000,
-                                value=default_qty,
-                                step=1,
-                                key=f"qty_{order_ref}_{req_id}_{i}",
-                            )
-                            corrected_items_input.append({"sku": line_sku, "quantity": line_qty})
-
-                        c3, c4 = st.columns([1, 2])
-                        reviewer_name = c3.text_input("Reviewer Username", value="reviewer_ops", key=f"rev_{order_ref}_{req_id}")
-                        reviewer_note = c4.text_input("Correction Comment", value="Customer confirmed SKU and unit count via support", key=f"com_{order_ref}_{req_id}")
-
-                        submit_btn = st.form_submit_button("✅ Apply Multi-Line Correction & Recalculate Pricing", type="primary")
-
-                        if submit_btn:
-                            apply_reviewer_correction(
-                                order_ref=order_ref,
-                                corrected_items=corrected_items_input,
-                                reviewer=reviewer_name,
-                                comment=reviewer_note,
-                            )
-                            st.session_state.pop(corr_state_key, None)
-                            st.success(f"Order {order_ref} updated successfully! Status set to 'reviewed'.")
-                            st.rerun()
-
-            elif status == "failed":
-                st.error(f"❌ **Extraction Error**: {notes} (Exception Code: `{exception_code}`)")
-
-            ## Audit History with Visible State Diff
+            # Audit Trail with Diff View
             history = get_review_history(order_ref)
             if history:
-                with st.expander(f"📜 Audit Trail / Review History ({len(history)} events)", expanded=False):
+                with st.expander(f"📜 Audit History ({len(history)} events)"):
                     for entry in history:
-                        st.markdown(
-                            f"**{entry['created_at']}** — *{entry['reviewer']}* performed `{entry['action']}`: *{entry['comment']}*"
-                        )
-                        # Render Before vs After Diff
+                        st.markdown(f"**{entry['created_at']}** — *{entry['reviewer']}* performed `{entry['action']}`: {entry['comment']}")
                         try:
-                            prev_st = json.loads(entry.get("previous_state") or "{}")
-                            new_st = json.loads(entry.get("new_state") or "{}")
-                            if prev_st or new_st:
-                                d_col1, d_col2 = st.columns(2)
-                                with d_col1:
-                                    st.caption("🔴 **Previous State:**")
-                                    st.json(prev_st)
-                                with d_col2:
-                                    st.caption("🟢 **New State (Applied):**")
-                                    st.json(new_st)
+                            pst = json.loads(entry.get("previous_state") or "{}")
+                            nst = json.loads(entry.get("new_state") or "{}")
+                            if pst or nst:
+                                d1, d2 = st.columns(2)
+                                d1.caption("Previous State:")
+                                d1.json(pst)
+                                d2.caption("New State:")
+                                d2.json(nst)
                         except Exception:
                             pass
+
+            st.markdown("<hr style='margin: 1rem 0;'>", unsafe_allow_html=True)
 
 
 with tab_analytics:
@@ -469,7 +363,7 @@ with tab_analytics:
         kpi1.metric("Zero-Touch Drafts", f"{auto_drafts} ({auto_drafts/total_valid_orders*100:.0f}%)" if total_valid_orders else "0")
         kpi2.metric("Human Reviewed", f"{reviewed} ({reviewed/total_valid_orders*100:.0f}%)" if total_valid_orders else "0")
         kpi3.metric("Clarifications", f"{clarifications} ({clarifications/total_valid_orders*100:.0f}%)" if total_valid_orders else "0")
-        kpi4.metric("Duplicates Blocked", f"{duplicates_count} blocked")
+        kpi4.metric("Duplicates / Amendments", f"{duplicates_count} dup / {metrics['amendments']} amended")
         kpi5.metric("Failures", f"{failed}")
 
         st.markdown("---")
@@ -511,7 +405,7 @@ with tab_analytics:
                 - **{unknown_prod} exceptions** stem from unlisted items or vague descriptions.
 
                 **Practical Process Improvement (Email Workflow):**
-                1. **Automated Instant Clarification Macro:** For container exceptions, instantly auto-respond with a one-click confirmation email providing standard pack counts (e.g., *"Did you mean 10 individual cables?"*).
-                2. **Customer Packaging Translation Alias Table:** Establish account-level alias mappings in the database (e.g., Client Acme: 1 box = 10 units of CAB-1) to turn ambiguous emails into 0-touch drafts automatically.
+                1. **Automated Unit Clarification Macro:** For container exceptions (R3, R7, R9), instantly auto-respond asking for the exact count of single items (e.g., *"How many individual CAB-1 cables do you need?"*).
+                2. **Customer Packaging Translation Tables:** Establish account-level pack mappings only where a customer has confirmed packaging unit counts in writing (proposal for operational review).
                 """
             )

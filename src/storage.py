@@ -248,7 +248,8 @@ def get_orders_metrics(db_path: str = DEFAULT_DB_PATH) -> Dict[str, int]:
     orders = list_orders(db_path=db_path)
     total_raw = len(orders)
     net_valid = sum(1 for o in orders if o["status"] != "duplicate")
-    duplicates = sum(1 for o in orders if o["status"] == "duplicate")
+    amendments = sum(1 for o in orders if o.get("exception_code") == "AMENDED_ORDER_REF_CONFLICT")
+    duplicates = sum(1 for o in orders if o["status"] == "duplicate") - amendments
     drafts = sum(1 for o in orders if o["status"] == "draft")
     reviewed = sum(1 for o in orders if o["status"] == "reviewed")
     clarifications = sum(1 for o in orders if o["status"] == "needs-clarification")
@@ -257,10 +258,13 @@ def get_orders_metrics(db_path: str = DEFAULT_DB_PATH) -> Dict[str, int]:
         "total_raw": total_raw,
         "net_valid": net_valid,
         "duplicates": duplicates,
+        "amendments": amendments,
         "drafts": drafts,
         "reviewed": reviewed,
         "clarifications": clarifications,
         "failed": failed,
+        "duplicates": duplicates,
+
     }
 
 
@@ -422,7 +426,7 @@ def apply_manual_correction(
         "is_cached": current_order.get("is_cached", True),
         "model": current_order.get("model", "openai/gpt-oss-120b"),
         "catalog_evidence": catalog_evidence,
-        "exception_code": "CLEAN_DRAFT",
+        "exception_code": current_order.get("exception_code") or "CLEAN_DRAFT",
         "created_at": current_order["created_at"],
     }
 
