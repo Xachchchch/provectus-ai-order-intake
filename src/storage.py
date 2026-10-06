@@ -36,7 +36,7 @@ def init_db(db_path: str = DEFAULT_DB_PATH) -> None:
                     total_cents INTEGER NOT NULL,
                     notes TEXT,
                     is_cached INTEGER DEFAULT 1,
-                    model TEXT DEFAULT 'llama-3.3-70b-versatile',
+                    model TEXT DEFAULT 'openai/gpt-oss-120b',
                     catalog_evidence_json TEXT DEFAULT '[]',
                     exception_code TEXT DEFAULT '',
                     created_at TEXT NOT NULL,
@@ -155,7 +155,7 @@ def save_order(order_data: Dict[str, Any], db_path: str = DEFAULT_DB_PATH) -> No
                     order_data.get("total_cents", 0),
                     order_data.get("notes", ""),
                     1 if order_data.get("is_cached", True) else 0,
-                    order_data.get("model", "llama-3.3-70b-versatile"),
+                    order_data.get("model", "openai/gpt-oss-120b"),
                     catalog_evidence_json,
                     exception_code,
                     order_data.get("created_at", now),
@@ -191,6 +191,19 @@ def get_order(order_ref: str, db_path: str = DEFAULT_DB_PATH) -> Optional[Dict[s
         if not row:
             return None
         return _deserialize_order_row(row)
+    finally:
+        conn.close()
+
+
+def get_orders_by_order_ref(order_ref: str, db_path: str = DEFAULT_DB_PATH) -> List[Dict[str, Any]]:
+    """Retrieve ALL orders recorded under a given order_ref."""
+    init_db(db_path)
+    conn = get_db_connection(db_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM orders WHERE order_ref = ? ORDER BY created_at ASC", (order_ref,))
+        rows = cursor.fetchall()
+        return [_deserialize_order_row(r) for r in rows]
     finally:
         conn.close()
 
@@ -408,7 +421,7 @@ def apply_manual_correction(
         "total_cents": pricing_result["total_cents"],
         "notes": f"Reviewed & corrected by {reviewer}: {comment}",
         "is_cached": current_order.get("is_cached", True),
-        "model": current_order.get("model", "llama-3.3-70b-versatile"),
+        "model": current_order.get("model", "openai/gpt-oss-120b"),
         "catalog_evidence": catalog_evidence,
         "exception_code": "CLEAN_DRAFT",
         "created_at": current_order["created_at"],

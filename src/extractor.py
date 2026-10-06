@@ -122,7 +122,7 @@ def load_cached_response(request_id: str, cache_dir: str = CACHE_DIR) -> Optiona
             raw_data = json.load(f)
         raw_data["is_cached"] = True
         if "model" not in raw_data:
-            raw_data["model"] = "llama-3.3-70b-versatile"
+            raw_data["model"] = "openai/gpt-oss-120b"
         raw_data.setdefault("tool_calls_log", [])
         payload = ExtractionPayload.model_validate(raw_data)
         return payload.model_dump()
@@ -310,7 +310,7 @@ def extract_order_information(
 
         if groq_key:
             client = OpenAI(api_key=groq_key, base_url="https://api.groq.com/openai/v1")
-            model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+            model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
         else:
             client = OpenAI(api_key=openai_key)
             model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")

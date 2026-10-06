@@ -16,6 +16,7 @@ from src.storage import (
     list_orders,
     save_clarification_draft,
     save_order,
+    get_orders_by_order_ref
 )
 
 
@@ -125,13 +126,20 @@ def process_request(
             "message": f"Request {request_id} already processed with status '{existing_by_req_id['status']}'.",
         }
 
-    # 1. Duplicate & Amendment Reprocessing Check
-    existing_order = get_order(order_ref, db_path=db_path)
-    if existing_order and existing_order["request_id"] != request_id:
-        # Check if identical re-submission
-        is_identical = (text.strip() == existing_order["raw_text"].strip())
+    # 1. Duplicate & Amendment Reprocessing Check across ALL prior requests under this order_ref
+    from src.storage import get_orders_by_order_ref
+    prior_orders = get_orders_by_order_ref(order_ref, db_path=db_path)
+    prior_orders_other = [o for o in prior_orders if o["request_id"] != request_id]
 
-        if is_identical:
+    if prior_orders_other:
+        # Check if text is identical to ANY prior request under this order_ref
+        matching_identical = next(
+            (o for o in prior_orders_other if text.strip() == o["raw_text"].strip()),
+            None
+        )
+
+        if matching_identical:
+            # It is an exact duplicate of one of the prior submissions!
             duplicate_data = {
                 "request_id": request_id,
                 "order_ref": order_ref,
@@ -141,7 +149,7 @@ def process_request(
                 "gross_cents": 0,
                 "discount_cents": 0,
                 "total_cents": 0,
-                "notes": f"Duplicate request for order_ref '{order_ref}'; identical to '{existing_order['request_id']}'.",
+                "notes": f"Duplicate request for order_ref '{order_ref}'; identical to '{matching_identical['request_id']}'.",
                 "is_cached": True,
                 "model": "rule_based_dedup",
                 "catalog_evidence": [],
@@ -152,13 +160,13 @@ def process_request(
                 "id": request_id,
                 "order_ref": order_ref,
                 "outcome": "duplicate",
-                "same_order_as": existing_order["request_id"],
+                "same_order_as": matching_identical["request_id"],
                 "new_drafts": 0,
                 "exception_code": ExceptionCode.DUPLICATE_ORDER_REF.value,
-                "message": f"Duplicate request for order_ref '{order_ref}'; already processed as '{existing_order['request_id']}'.",
+                "message": f"Duplicate request for order_ref '{order_ref}'; identical to '{matching_identical['request_id']}'.",
             }
         else:
-            # Conflicting amendment with same order_ref -> Route to needs-clarification
+            # Text differs from ALL prior submissions -> True Conflicting Amendment
             conflict_issue = {
                 "reason": "Amended order request conflicting with existing submission under identical order_ref",
                 "product": "conflicting_amendment",

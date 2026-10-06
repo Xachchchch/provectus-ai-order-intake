@@ -9,11 +9,29 @@
       "extracted_sku": "HUB-1",
       "extracted_quantity": null,
       "is_quantity_ambiguous": true,
-      "ambiguity_reason": "Quantity expressed as 'pack' which does not specify an exact number of units"
+      "ambiguity_reason": "Container quantity 'pack' is ambiguous; exact unit count not specified."
     }
   ],
   "confidence": 0.95,
   "is_cached": true,
-  "model": "llama-3.3-70b-versatile",
-  "cached_at": "2026-10-05T21:12:16.100591+00:00"
+  "model": "openai/gpt-oss-120b",
+  "cached_at": null,
+  "tool_calls_log": [
+    {
+      "tool_call_id": "fc_a9d3c068-f8df-42f0-aef2-8210ca4cd617",
+      "function": "lookup_catalog",
+      "arguments": {
+        "query": "USB hub"
+      },
+      "result": {
+        "query": "USB hub",
+        "matched": true,
+        "sku": "HUB-1",
+        "name": "USB hub",
+        "unit_cents": 5000,
+        "match_rule": "unambiguous_alias",
+        "evidence": "Matched catalog name 'USB hub' -> HUB-1 ($50.00)"
+      }
+    }
+  ]
 }

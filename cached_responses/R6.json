@@ -22,6 +22,40 @@
   ],
   "confidence": 0.95,
   "is_cached": true,
-  "model": "llama-3.3-70b-versatile",
-  "cached_at": "2026-10-05T21:12:14.555465+00:00"
+  "model": "openai/gpt-oss-120b",
+  "cached_at": null,
+  "tool_calls_log": [
+    {
+      "tool_call_id": "fc_a880ab0a-4b0e-4c3e-aa34-3151b087e222",
+      "function": "lookup_catalog",
+      "arguments": {
+        "query": "CAB-2"
+      },
+      "result": {
+        "query": "CAB-2",
+        "matched": true,
+        "sku": "CAB-2",
+        "name": "USB-C cable 2 m",
+        "unit_cents": 3000,
+        "match_rule": "exact_sku",
+        "evidence": "Matched exact SKU CAB-2 (USB-C cable 2 m, $30.00)"
+      }
+    },
+    {
+      "tool_call_id": "fc_2c11cad2-f7a2-483d-bb42-55c2106e7283",
+      "function": "lookup_catalog",
+      "arguments": {
+        "query": "HUB-1"
+      },
+      "result": {
+        "query": "HUB-1",
+        "matched": true,
+        "sku": "HUB-1",
+        "name": "USB hub",
+        "unit_cents": 5000,
+        "match_rule": "exact_sku",
+        "evidence": "Matched exact SKU HUB-1 (USB hub, $50.00)"
+      }
+    }
+  ]
 }

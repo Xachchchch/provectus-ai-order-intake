@@ -14,6 +14,24 @@
   ],
   "confidence": 0.95,
   "is_cached": true,
-  "model": "llama-3.3-70b-versatile",
-  "cached_at": "2026-10-05T21:12:18.107532+00:00"
+  "model": "openai/gpt-oss-120b",
+  "cached_at": null,
+  "tool_calls_log": [
+    {
+      "tool_call_id": "fc_41587765-daa8-46fd-9a7e-2d40b70ba199",
+      "function": "lookup_catalog",
+      "arguments": {
+        "query": "USB-C cable"
+      },
+      "result": {
+        "query": "USB-C cable",
+        "matched": false,
+        "sku": null,
+        "name": null,
+        "unit_cents": null,
+        "match_rule": "ambiguous_multi_match",
+        "evidence": "Ambiguous product description: matches multiple catalog SKUs (CAB-1, CAB-2)"
+      }
+    }
+  ]
 }

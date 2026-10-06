@@ -11,15 +11,14 @@ This document describes the AI tools, models, prompts, failure cases, and reprod
 - **Role**: Architecture design, deterministic rule synthesis, pytest test suite formulation, Streamlit interface generation, and test verification.
 
 ### Application Model Integration
-- **LLM Providers Supported**:
-  - **Groq API**: `llama-3.3-70b-versatile` (fast structured extraction).
-  - **OpenAI API**: `gpt-4o-mini` (fallback).
+- **LLM Provider**:
+  - **Groq API**: `openai/gpt-oss-120b` (fast structured extraction with native Tool Calling).
 - **Inference Parameters**:
   - `temperature`: `0.0` (for strict, reproducible extraction).
-  - `response_format`: `{"type": "json_object"}`.
+  - `tools`: `[CATALOG_LOOKUP_TOOL]` (native OpenAI/Groq function calling).
 - **Offline Deterministic Replay**:
   - Full suite of pre-recorded extraction artifacts saved under [`cached_responses/`](../cached_responses/) (`R1.json` through `R10.json`).
-  - Explicitly labeled with `"is_cached": true` and `"model": "llama-3.3-70b-versatile"`.
+  - Explicitly labeled with `"is_cached": true` and `"model": "openai/gpt-oss-120b"`.
   - Allows full test suite execution, grading, and demonstration with **zero API keys** or external network dependency.
 
 ---

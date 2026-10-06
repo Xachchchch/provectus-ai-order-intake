@@ -6,7 +6,7 @@
     {
       "raw_product_text": "USB-C cable 1 m",
       "raw_quantity_text": "10",
-      "extracted_sku": null,
+      "extracted_sku": "CAB-1",
       "extracted_quantity": 10,
       "is_quantity_ambiguous": false,
       "ambiguity_reason": null
@@ -14,6 +14,24 @@
   ],
   "confidence": 0.95,
   "is_cached": true,
-  "model": "llama-3.3-70b-versatile",
-  "cached_at": "2026-10-05T21:12:12.040845+00:00"
+  "model": "openai/gpt-oss-120b",
+  "cached_at": null,
+  "tool_calls_log": [
+    {
+      "tool_call_id": "fc_577e0d1e-46df-4695-bd7a-797d00871a36",
+      "function": "lookup_catalog",
+      "arguments": {
+        "query": "USB-C cable 1 m"
+      },
+      "result": {
+        "query": "USB-C cable 1 m",
+        "matched": true,
+        "sku": "CAB-1",
+        "name": "USB-C cable 1 m",
+        "unit_cents": 2000,
+        "match_rule": "unambiguous_alias",
+        "evidence": "Matched catalog name 'USB-C cable 1 m' -> CAB-1 ($20.00)"
+      }
+    }
+  ]
 }

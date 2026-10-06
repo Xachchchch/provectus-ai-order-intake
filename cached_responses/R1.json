@@ -14,6 +14,24 @@
   ],
   "confidence": 0.95,
   "is_cached": true,
-  "model": "llama-3.3-70b-versatile",
-  "cached_at": "2026-10-05T21:12:05.975530+00:00"
+  "model": "openai/gpt-oss-120b",
+  "cached_at": null,
+  "tool_calls_log": [
+    {
+      "tool_call_id": "fc_bdf506a7-5e8d-40ac-9e3b-008498986e2c",
+      "function": "lookup_catalog",
+      "arguments": {
+        "query": "CAB-1"
+      },
+      "result": {
+        "query": "CAB-1",
+        "matched": true,
+        "sku": "CAB-1",
+        "name": "USB-C cable 1 m",
+        "unit_cents": 2000,
+        "match_rule": "exact_sku",
+        "evidence": "Matched exact SKU CAB-1 (USB-C cable 1 m, $20.00)"
+      }
+    }
+  ]
 }

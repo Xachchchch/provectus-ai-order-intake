@@ -14,6 +14,24 @@
   ],
   "confidence": 0.95,
   "is_cached": true,
-  "model": "llama-3.3-70b-versatile",
-  "cached_at": "2026-10-05T21:12:07.209698+00:00"
+  "model": "openai/gpt-oss-120b",
+  "cached_at": null,
+  "tool_calls_log": [
+    {
+      "tool_call_id": "fc_347e1dfc-fd4a-4dde-8114-a7a5261e1d44",
+      "function": "lookup_catalog",
+      "arguments": {
+        "query": "Moon adapter"
+      },
+      "result": {
+        "query": "Moon adapter",
+        "matched": false,
+        "sku": null,
+        "name": null,
+        "unit_cents": null,
+        "match_rule": "unknown_product",
+        "evidence": "Unknown product: 'Moon adapter' (not found in catalog)"
+      }
+    }
+  ]
 }

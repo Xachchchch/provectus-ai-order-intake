@@ -17,7 +17,7 @@
       "files": [
         "src/extractor.py"
       ],
-      "notes": "llama-3.3-70b-versatile via Groq and gpt-4o-mini via OpenAI with temperature 0.0 and json_object response format. Offline cached responses in cached_responses/ for zero-credential deterministic replay."
+      "notes": "openai/gpt-oss-120b via Groq and gpt-4o-mini via OpenAI with temperature 0.0 and json_object response format. Offline cached responses in cached_responses/ for zero-credential deterministic replay."
     },
     "skills": {
       "status": "not-used",
@@ -71,9 +71,9 @@
       "redactions": []
     },
     {
-      "name": "Groq / OpenAI LLM Configuration",
+      "name": "Groq LLM Configuration",
       "category": "application_models_and_parameters",
-      "purpose": "JSON extraction with zero temperature and cached replay fallback.",
+      "purpose": "Native Tool Calling with temperature 0.0 and cached replay fallback using openai/gpt-oss-120b.",
       "original_path_or_scope": ".env",
       "saved_path": "ai-workflow/.env.example",
       "version_or_commit": "HEAD",

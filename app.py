@@ -173,7 +173,7 @@ with tab_queue:
         created_at = order["created_at"]
         raw_text = order["raw_text"]
         notes = order.get("notes", "")
-        model_name = order.get("model", "llama-3.3-70b-versatile")
+        model_name = order.get("model", "openai/gpt-oss-120b")
         is_cached = order.get("is_cached", True)
         catalog_evidence = order.get("catalog_evidence", [])
         exception_code = order.get("exception_code", "")
@@ -254,30 +254,37 @@ with tab_queue:
                     existing_lines = order.get("line_items", [])
                     default_lines_count = max(1, len(existing_lines))
 
-                    num_lines_draft = st.number_input(
-                        "Number of Line Items:",
-                        min_value=1,
-                        max_value=5,
-                        value=default_lines_count,
-                        step=1,
-                        key=f"num_lines_draft_{order_ref}_{req_id}",
-                    )
+                    # Initialize session state for draft line items if not present
+                    state_key = f"lines_{order_ref}_{req_id}"
+                    if state_key not in st.session_state:
+                        st.session_state[state_key] = [
+                            {"sku": item.get("sku", "CAB-1"), "quantity": item.get("quantity", 1)}
+                            for item in existing_lines
+                        ] or [{"sku": "CAB-1", "quantity": 1}]
+
+                    current_item_count = len(st.session_state[state_key])
+
+                    # Controls to Add / Remove lines without losing entered values
+                    col_b1, col_b2, col_info = st.columns([1, 1, 3])
+                    if col_b1.button("➕ Add Item Line", key=f"add_{state_key}"):
+                        st.session_state[state_key].append({"sku": "CAB-1", "quantity": 1})
+                        st.rerun()
+                    if col_b2.button("➖ Remove Line", key=f"rem_{state_key}") and current_item_count > 1:
+                        st.session_state[state_key].pop()
+                        st.rerun()
+                    col_info.caption(f"Managing **{current_item_count}** line item(s).")
 
                     with st.form(key=f"draft_approval_form_{order_ref}_{req_id}"):
                         corrected_items_draft = []
                         sku_options = list(CATALOG.keys())
 
-                        for i in range(int(num_lines_draft)):
+                        for i, item_data in enumerate(st.session_state[state_key]):
                             st.markdown(f"**Item Line {i + 1}**")
                             c1, c2 = st.columns([2, 1])
 
-                            default_sku_idx = 0
-                            default_qty = 1
-                            if i < len(existing_lines):
-                                curr_sku = existing_lines[i].get("sku")
-                                if curr_sku in sku_options:
-                                    default_sku_idx = sku_options.index(curr_sku)
-                                default_qty = existing_lines[i].get("quantity", 1)
+                            curr_sku = item_data.get("sku", "CAB-1")
+                            default_sku_idx = sku_options.index(curr_sku) if curr_sku in sku_options else 0
+                            default_qty = int(item_data.get("quantity", 1))
 
                             line_sku = c1.selectbox(
                                 f"Catalog Item (Line {i + 1})",
@@ -320,6 +327,7 @@ with tab_queue:
                                 reviewer=reviewer_name_draft,
                                 comment=reviewer_note_draft,
                             )
+                            st.session_state.pop(state_key, None)
                             st.success(f"✅ Order {order_ref} approved and marked as 'reviewed'!")
                             st.rerun()
 
@@ -347,32 +355,38 @@ with tab_queue:
                     st.write("Resolve this exception by specifying confirmed catalog items and quantities across all order lines (updates status to **'reviewed'**):")
 
                     existing_lines = order.get("line_items", [])
-                    default_lines_count = max(1, len(existing_lines))
-                    
-                    num_lines = st.number_input(
-                        "Number of Line Items to Confirm:",
-                        min_value=1,
-                        max_value=5,
-                        value=default_lines_count,
-                        step=1,
-                        key=f"num_lines_{order_ref}_{req_id}",
-                    )
+
+                    # Initialize session state for clarification line items
+                    corr_state_key = f"corr_lines_{order_ref}_{req_id}"
+                    if corr_state_key not in st.session_state:
+                        st.session_state[corr_state_key] = [
+                            {"sku": item.get("sku", "CAB-1"), "quantity": item.get("quantity", 1)}
+                            for item in existing_lines
+                        ] or [{"sku": "CAB-1", "quantity": 1}]
+
+                    current_corr_count = len(st.session_state[corr_state_key])
+
+                    # Controls to Add / Remove lines without losing entered values
+                    col_c1, col_c2, col_cinfo = st.columns([1, 1, 3])
+                    if col_c1.button("➕ Add Item Line", key=f"add_{corr_state_key}"):
+                        st.session_state[corr_state_key].append({"sku": "CAB-1", "quantity": 1})
+                        st.rerun()
+                    if col_c2.button("➖ Remove Line", key=f"rem_{corr_state_key}") and current_corr_count > 1:
+                        st.session_state[corr_state_key].pop()
+                        st.rerun()
+                    col_cinfo.caption(f"Managing **{current_corr_count}** line item(s).")
 
                     with st.form(key=f"correction_form_{order_ref}_{req_id}"):
                         corrected_items_input = []
                         sku_options = list(CATALOG.keys())
 
-                        for i in range(int(num_lines)):
+                        for i, item_data in enumerate(st.session_state[corr_state_key]):
                             st.markdown(f"**Item Line {i+1}**")
                             c1, c2 = st.columns([2, 1])
-                            
-                            default_sku_idx = 0
-                            default_qty = 1
-                            if i < len(existing_lines):
-                                curr_sku = existing_lines[i].get("sku")
-                                if curr_sku in sku_options:
-                                    default_sku_idx = sku_options.index(curr_sku)
-                                default_qty = existing_lines[i].get("quantity", 1)
+
+                            curr_sku = item_data.get("sku", "CAB-1")
+                            default_sku_idx = sku_options.index(curr_sku) if curr_sku in sku_options else 0
+                            default_qty = int(item_data.get("quantity", 1))
 
                             line_sku = c1.selectbox(
                                 f"Catalog Item (Line {i+1})",
@@ -404,6 +418,7 @@ with tab_queue:
                                 reviewer=reviewer_name,
                                 comment=reviewer_note,
                             )
+                            st.session_state.pop(corr_state_key, None)
                             st.success(f"Order {order_ref} updated successfully! Status set to 'reviewed'.")
                             st.rerun()
 

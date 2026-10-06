@@ -9,11 +9,29 @@
       "extracted_sku": null,
       "extracted_quantity": null,
       "is_quantity_ambiguous": true,
-      "ambiguity_reason": "Quantity expressed in container term 'boxes' which is ambiguous without known units per box."
+      "ambiguity_reason": "Quantity expressed in containers (boxes) leading to ambiguity"
     }
   ],
   "confidence": 0.95,
   "is_cached": true,
-  "model": "llama-3.3-70b-versatile",
-  "cached_at": "2026-10-05T21:12:09.129859+00:00"
+  "model": "openai/gpt-oss-120b",
+  "cached_at": null,
+  "tool_calls_log": [
+    {
+      "tool_call_id": "fc_aaba26e3-f27a-49bd-9c8f-769d4aa0ce7e",
+      "function": "lookup_catalog",
+      "arguments": {
+        "query": "usual cable"
+      },
+      "result": {
+        "query": "usual cable",
+        "matched": false,
+        "sku": null,
+        "name": null,
+        "unit_cents": null,
+        "match_rule": "ambiguous_multi_match",
+        "evidence": "Ambiguous product description: matches multiple catalog SKUs (CAB-1, CAB-2)"
+      }
+    }
+  ]
 }
