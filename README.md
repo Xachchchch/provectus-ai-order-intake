@@ -5,6 +5,17 @@ A deterministic AI Order Intake pipeline that parses unstructured natural langua
 
 ---
 
+## 🔗 Quick Links & Presentation
+
+* **GitHub Repository:** [https://github.com/Xachchchch/provectus-ai-order-intake](https://github.com/Xachchchch/provectus-ai-order-intake)
+* **Video Walkthrough Demo:** [Watch on Google Drive](https://drive.google.com/file/d/1sz_dQt1yRydahKFJlsKLu8afuf3NRcxx/view?usp=drive_link)
+* **Written Walkthrough Document:** [`walkthrough.md`](walkthrough.md)
+* **Check Results Report:** [`docs/check_results.md`](docs/check_results.md)
+* **LLM Code Generation Note:** [`docs/llm_usage_note.md`](docs/llm_usage_note.md)
+
+---
+
+
 ## 🚀 Key Features & Domain Compliance
 
 All domain specifications from [`tasks/orders/domain.md`](tasks/orders/domain.md) and platform requirements are strictly enforced:
