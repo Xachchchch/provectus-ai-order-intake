@@ -120,6 +120,10 @@ if st.sidebar.button("🧹 Reset Database"):
     st.sidebar.info("Database reset.")
     st.rerun()
 
+# Retrieve orders and metrics from DB (MUST BE BEFORE EXPORT)
+all_orders = list_orders()
+metrics = get_orders_metrics()
+
 # ── Optional Enhancement: Export Finalized Orders ─────────────────────────────
 st.sidebar.markdown("---")
 st.sidebar.header("📥 Data Export")
@@ -147,10 +151,6 @@ if reviewed_orders:
         mime="application/json",
         help="Export all verified draft and reviewed orders in structured JSON format.",
     )
-
-# Retrieve orders and metrics from DB
-all_orders = list_orders()
-metrics = get_orders_metrics()
 
 # Top Navigation Tabs
 tab_queue, tab_analytics = st.tabs(["📦 Operations Queue", "📊 Analytics & Insights"])
